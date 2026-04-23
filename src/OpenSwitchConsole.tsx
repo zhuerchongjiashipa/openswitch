@@ -326,6 +326,25 @@ const styles = {
     fontFamily: OS_TOKENS.mono,
     opacity: 0.8,
   } satisfies CSSProperties,
+  chipRemove: (visible: boolean): CSSProperties => ({
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    color: OS_TOKENS.inkMute,
+    fontSize: 13,
+    lineHeight: 1,
+    background: 'transparent',
+    border: 'none',
+    fontFamily: 'inherit',
+    opacity: visible ? 1 : 0,
+    transition: 'opacity .1s, background .1s',
+    marginLeft: 4,
+    padding: 0,
+  }),
   poolEmpty: {
     padding: '14px 12px',
     fontSize: 11.5,
@@ -573,6 +592,54 @@ export function OpenSwitchConsole() {
     }
   };
 
+  const handleRemove = async (tool: Tool, cred: Credential) => {
+    const ok = window.confirm(
+      `Delete credential "${cred.alias}" for ${tool.cli}?\n\nThe pool copy is removed; any environment using it is unbound. Files currently live on disk are not touched.`,
+    );
+    if (!ok) return;
+    try {
+      const next = await api.removeCredential(cred.id);
+      setState(next);
+      showToast(`Removed ${tool.cli} → ${cred.alias}`);
+    } catch (e) {
+      showToast(`Remove ${cred.alias}: ${describe(e)}`, false);
+    }
+  };
+
+  const handleNewEnv = async () => {
+    setWsOpen(false);
+    const name = window.prompt('New environment name?');
+    if (!name) return;
+    const id = name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+    if (!id) {
+      showToast('Invalid environment name', false);
+      return;
+    }
+    const hint = window.prompt('Short description (optional)?', '') ?? '';
+    try {
+      const next = await api.addEnvironment(id, name.trim(), hint.trim());
+      setState(next);
+      showToast(`Created ${name.trim()}`);
+    } catch (e) {
+      showToast(describe(e), false);
+    }
+  };
+
+  const handleRemoveEnv = async (envId: string, envName: string) => {
+    if (!window.confirm(`Delete environment "${envName}"?`)) return;
+    try {
+      const next = await api.removeEnvironment(envId);
+      setState(next);
+      showToast(`Deleted ${envName}`);
+    } catch (e) {
+      showToast(describe(e), false);
+    }
+  };
+
   const cliLines = state.tools.map((t) => {
     const credId = envBindings[t.id];
     const cred = credId ? state.pool.find((c) => c.id === credId) : null;
@@ -628,6 +695,7 @@ export function OpenSwitchConsole() {
           {state.envs.map((e) => {
             const isActive = e.id === env.id;
             const n = Object.values(e.bindings).filter(Boolean).length;
+            const canDelete = state.envs.length > 1;
             return (
               <div
                 key={e.id}
@@ -650,15 +718,31 @@ export function OpenSwitchConsole() {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 500 }}>{e.name}</div>
                   <div style={styles.wsMenuSub}>
-                    {e.hint} · {n} tools
+                    {e.hint || '—'} · {n} tools
                   </div>
                 </div>
                 {isActive && <span style={styles.wsMenuCheck}>✓</span>}
+                {canDelete && !isActive && (
+                  <button
+                    style={styles.chipRemove(true)}
+                    aria-label={`Delete ${e.name}`}
+                    title="Delete environment"
+                    onClick={(ev) => {
+                      ev.stopPropagation();
+                      handleRemoveEnv(e.id, e.name);
+                    }}
+                  >
+                    ×
+                  </button>
+                )}
               </div>
             );
           })}
           <div style={styles.wsMenuSep} />
-          <div style={{ ...styles.wsMenuItem(false), color: OS_TOKENS.inkSoft }}>
+          <div
+            style={{ ...styles.wsMenuItem(false), color: OS_TOKENS.inkSoft }}
+            onClick={handleNewEnv}
+          >
             <span
               style={{
                 ...styles.wsAvatar,
@@ -672,21 +756,6 @@ export function OpenSwitchConsole() {
               +
             </span>
             <span>New environment…</span>
-          </div>
-          <div style={{ ...styles.wsMenuItem(false), color: OS_TOKENS.inkSoft }}>
-            <span
-              style={{
-                ...styles.wsAvatar,
-                width: 20,
-                height: 20,
-                background: OS_TOKENS.sunken,
-                color: OS_TOKENS.inkSoft,
-                fontSize: 11,
-              }}
-            >
-              ⚙
-            </span>
-            <span>Manage environments</span>
           </div>
         </div>
       )}
@@ -764,13 +833,14 @@ export function OpenSwitchConsole() {
                   creds.map((c) => {
                     const isActive = c.id === activeCredId;
                     const hoverKey = `${t.id}:${c.id}`;
+                    const isHovered = hoverChip === hoverKey;
                     const usedInEnvs = state.envs.filter(
                       (e) => e.bindings[t.id] === c.id,
                     ).length;
                     return (
                       <div
                         key={c.id}
-                        style={styles.chip(isActive, hoverChip === hoverKey)}
+                        style={styles.chip(isActive, isHovered)}
                         onMouseEnter={() => setHoverChip(hoverKey)}
                         onMouseLeave={() => setHoverChip(null)}
                         onClick={() => !isActive && handleActivate(t, c)}
@@ -806,6 +876,17 @@ export function OpenSwitchConsole() {
                         {!isActive && usedInEnvs > 0 && (
                           <span style={styles.chipMeta}>in {usedInEnvs}</span>
                         )}
+                        <button
+                          style={styles.chipRemove(isHovered)}
+                          aria-label={`Delete ${c.alias}`}
+                          title="Delete credential"
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            handleRemove(t, c);
+                          }}
+                        >
+                          ×
+                        </button>
                       </div>
                     );
                   })
