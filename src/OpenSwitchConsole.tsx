@@ -1,17 +1,16 @@
-import { CSSProperties, useEffect, useRef, useState } from 'react';
+import { CSSProperties, useCallback, useEffect, useRef, useState } from 'react';
 import {
+  AppState,
   Credential,
-  OS_ENVS,
-  OS_ENVS_BY_ID,
-  OS_POOL,
-  OS_POOL_BY_ID,
-  OS_TOKENS,
-  OS_TOOLS,
-  OS_TOOLS_BY_ID,
+  EnvSwitchOutcome,
+  SwitchOutcome,
+  Tool,
   ToolId,
-  osCredsForTool,
-  osFmtDate,
-} from './data';
+  api,
+  credsForTool,
+  fmtDate,
+} from './api';
+import { OS_TOKENS } from './data';
 
 type Density = 'compact' | 'comfortable';
 
@@ -55,7 +54,6 @@ const styles = {
     fontSize: 13,
     transition: 'background .12s, border-color .12s',
   }),
-
   wsAvatar: {
     width: 22,
     height: 22,
@@ -69,7 +67,6 @@ const styles = {
     fontWeight: 600,
     letterSpacing: '-0.01em',
   } satisfies CSSProperties,
-
   wsName: { fontWeight: 500, letterSpacing: '-0.005em' } satisfies CSSProperties,
   wsChevron: { color: OS_TOKENS.inkMute, fontSize: 10, marginLeft: 2 } satisfies CSSProperties,
   wsDivider: { width: 1, height: 20, background: OS_TOKENS.line } satisfies CSSProperties,
@@ -110,7 +107,6 @@ const styles = {
     minWidth: 260,
     cursor: 'text',
   } satisfies CSSProperties,
-
   kbd: {
     display: 'inline-flex',
     alignItems: 'center',
@@ -126,7 +122,6 @@ const styles = {
     fontFamily: OS_TOKENS.mono,
     marginLeft: 2,
   } satisfies CSSProperties,
-
   topBtn: {
     height: 30,
     padding: '0 12px',
@@ -174,16 +169,8 @@ const styles = {
     background: active ? OS_TOKENS.sunken : 'transparent',
   }),
   wsMenuSub: { fontSize: 11.5, color: OS_TOKENS.inkMute } satisfies CSSProperties,
-  wsMenuCheck: {
-    marginLeft: 'auto',
-    color: OS_TOKENS.accent,
-    fontSize: 13,
-  } satisfies CSSProperties,
-  wsMenuSep: {
-    height: 1,
-    background: OS_TOKENS.line,
-    margin: '6px 0',
-  } satisfies CSSProperties,
+  wsMenuCheck: { marginLeft: 'auto', color: OS_TOKENS.accent, fontSize: 13 } satisfies CSSProperties,
+  wsMenuSep: { height: 1, background: OS_TOKENS.line, margin: '6px 0' } satisfies CSSProperties,
 
   subbar: {
     flexShrink: 0,
@@ -192,17 +179,8 @@ const styles = {
     alignItems: 'flex-end',
     gap: 16,
   } satisfies CSSProperties,
-  envTitle: {
-    fontSize: 22,
-    fontWeight: 600,
-    letterSpacing: '-0.015em',
-    margin: 0,
-  } satisfies CSSProperties,
-  envHint: {
-    color: OS_TOKENS.inkMute,
-    fontSize: 13,
-    marginTop: 2,
-  } satisfies CSSProperties,
+  envTitle: { fontSize: 22, fontWeight: 600, letterSpacing: '-0.015em', margin: 0 } satisfies CSSProperties,
+  envHint: { color: OS_TOKENS.inkMute, fontSize: 13, marginTop: 2 } satisfies CSSProperties,
   subMeta: {
     marginLeft: 'auto',
     fontSize: 11.5,
@@ -213,10 +191,10 @@ const styles = {
     alignItems: 'center',
   } satisfies CSSProperties,
 
-  cols: (density: Density): CSSProperties => ({
+  cols: (density: Density, n: number): CSSProperties => ({
     flex: 1,
     display: 'grid',
-    gridTemplateColumns: `repeat(${OS_TOOLS.length}, minmax(0, 1fr))`,
+    gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))`,
     gap: density === 'compact' ? 0 : 12,
     padding: density === 'compact' ? '8px 16px 24px' : '12px 20px 28px',
     minHeight: 0,
@@ -260,11 +238,7 @@ const styles = {
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
   } satisfies CSSProperties,
-  colCli: {
-    fontSize: 10.5,
-    color: OS_TOKENS.inkMute,
-    fontFamily: OS_TOKENS.mono,
-  } satisfies CSSProperties,
+  colCli: { fontSize: 10.5, color: OS_TOKENS.inkMute, fontFamily: OS_TOKENS.mono } satisfies CSSProperties,
   colMenu: {
     width: 22,
     height: 22,
@@ -295,12 +269,7 @@ const styles = {
     gap: 6,
     marginBottom: 6,
   } satisfies CSSProperties,
-  activeDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 999,
-    background: OS_TOKENS.accent,
-  } satisfies CSSProperties,
+  activeDot: { width: 6, height: 6, borderRadius: 999, background: OS_TOKENS.accent } satisfies CSSProperties,
   activeAlias: (empty: boolean): CSSProperties => ({
     fontSize: 15,
     fontWeight: 600,
@@ -308,12 +277,7 @@ const styles = {
     color: empty ? OS_TOKENS.inkFaint : OS_TOKENS.ink,
     fontStyle: empty ? 'italic' : 'normal',
   }),
-  activeMeta: {
-    fontSize: 11,
-    color: OS_TOKENS.inkMute,
-    marginTop: 4,
-    fontFamily: OS_TOKENS.mono,
-  } satisfies CSSProperties,
+  activeMeta: { fontSize: 11, color: OS_TOKENS.inkMute, marginTop: 4, fontFamily: OS_TOKENS.mono } satisfies CSSProperties,
 
   poolHead: {
     padding: '4px 16px 6px',
@@ -341,11 +305,7 @@ const styles = {
     borderRadius: 6,
     fontSize: 12.5,
     cursor: isActive ? 'default' : 'pointer',
-    background: isActive
-      ? 'transparent'
-      : hover
-        ? OS_TOKENS.sunken
-        : 'transparent',
+    background: isActive ? 'transparent' : hover ? OS_TOKENS.sunken : 'transparent',
     color: isActive ? OS_TOKENS.inkFaint : OS_TOKENS.ink,
     transition: 'background .1s',
     border: '1px solid transparent',
@@ -365,6 +325,13 @@ const styles = {
     color: OS_TOKENS.inkMute,
     fontFamily: OS_TOKENS.mono,
     opacity: 0.8,
+  } satisfies CSSProperties,
+  poolEmpty: {
+    padding: '14px 12px',
+    fontSize: 11.5,
+    color: OS_TOKENS.inkMute,
+    fontStyle: 'italic',
+    textAlign: 'center',
   } satisfies CSSProperties,
   addCred: {
     margin: '4px 10px 10px',
@@ -407,91 +374,10 @@ const styles = {
     fontFamily: OS_TOKENS.sans,
     fontWeight: 500,
   } satisfies CSSProperties,
-  drawerLines: {
-    padding: '10px 16px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 4,
-  } satisfies CSSProperties,
-  drawerLine: {
-    display: 'flex',
-    gap: 10,
-    alignItems: 'baseline',
-  } satisfies CSSProperties,
+  drawerLines: { padding: '10px 16px', display: 'flex', flexDirection: 'column', gap: 4 } satisfies CSSProperties,
+  drawerLine: { display: 'flex', gap: 10, alignItems: 'baseline' } satisfies CSSProperties,
   drawerPrompt: { color: '#5b8a72', flexShrink: 0 } satisfies CSSProperties,
   drawerComment: { color: '#6b655c' } satisfies CSSProperties,
-
-  tweaks: {
-    position: 'fixed',
-    bottom: 16,
-    right: 16,
-    zIndex: 40,
-    width: 280,
-    background: OS_TOKENS.surface,
-    border: `1px solid ${OS_TOKENS.line}`,
-    borderRadius: 10,
-    boxShadow: '0 12px 40px -8px rgba(0,0,0,0.15)',
-    fontSize: 12.5,
-  } satisfies CSSProperties,
-  tweakHead: {
-    padding: '10px 14px',
-    borderBottom: `1px solid ${OS_TOKENS.lineSoft}`,
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    fontWeight: 600,
-  } satisfies CSSProperties,
-  tweakBody: {
-    padding: '10px 14px 14px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 10,
-  } satisfies CSSProperties,
-  tweakRow: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-  } satisfies CSSProperties,
-  tweakLabel: { color: OS_TOKENS.inkSoft } satisfies CSSProperties,
-  seg: {
-    display: 'inline-flex',
-    background: OS_TOKENS.sunken,
-    borderRadius: 6,
-    padding: 2,
-    border: `1px solid ${OS_TOKENS.lineSoft}`,
-  } satisfies CSSProperties,
-  segBtn: (active: boolean): CSSProperties => ({
-    padding: '4px 10px',
-    borderRadius: 4,
-    cursor: 'pointer',
-    fontSize: 11.5,
-    background: active ? OS_TOKENS.surface : 'transparent',
-    border: `1px solid ${active ? OS_TOKENS.line : 'transparent'}`,
-    color: active ? OS_TOKENS.ink : OS_TOKENS.inkMute,
-    fontFamily: 'inherit',
-    fontWeight: active ? 500 : 400,
-  }),
-  toggle: (on: boolean): CSSProperties => ({
-    width: 28,
-    height: 16,
-    borderRadius: 999,
-    padding: 2,
-    cursor: 'pointer',
-    background: on ? OS_TOKENS.accent : OS_TOKENS.inkFaint,
-    transition: 'background .15s',
-    position: 'relative',
-    border: 'none',
-  }),
-  toggleKnob: (on: boolean): CSSProperties => ({
-    width: 12,
-    height: 12,
-    borderRadius: 999,
-    background: '#fff',
-    transform: `translateX(${on ? 12 : 0}px)`,
-    transition: 'transform .15s',
-    boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
-  }),
 
   toast: {
     position: 'fixed',
@@ -509,116 +395,198 @@ const styles = {
     gap: 10,
     zIndex: 50,
     fontFamily: OS_TOKENS.sans,
+    maxWidth: '80vw',
   } satisfies CSSProperties,
-  toastDot: {
+  toastDot: (ok: boolean): CSSProperties => ({
     width: 6,
     height: 6,
     borderRadius: 999,
-    background: OS_TOKENS.ok,
+    background: ok ? OS_TOKENS.ok : OS_TOKENS.danger,
+  }),
+
+  loading: {
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: OS_TOKENS.inkMute,
+    fontSize: 13,
+  } satisfies CSSProperties,
+  errorPane: {
+    margin: 24,
+    padding: 20,
+    border: `1px solid ${OS_TOKENS.line}`,
+    borderRadius: 10,
+    background: OS_TOKENS.surface,
+    color: OS_TOKENS.ink,
+    maxWidth: 720,
   } satisfies CSSProperties,
 };
 
-type BindingsByEnv = Record<string, Record<string, string | undefined>>;
-
-const INITIAL_BINDINGS: BindingsByEnv = Object.fromEntries(
-  OS_ENVS.map((e) => [e.id, { ...e.bindings }]),
-);
-
-interface CliLine {
-  prompt: string;
+interface Toast {
   text: string;
-  comment?: boolean;
+  ok: boolean;
 }
 
-function cliCommandFor(tool: ToolId, cred: Credential): string {
+function describe(err: unknown): string {
+  if (typeof err === 'string') return err;
+  if (err instanceof Error) return err.message;
+  return JSON.stringify(err);
+}
+
+function cliCommandFor(tool: ToolId, alias: string): string {
   switch (tool) {
     case 'git':
-      return `git config --global credential.helper "${cred.alias}"`;
+      return `git config --global credential.helper "${alias}"`;
     case 'wrangler':
-      return `wrangler whoami --profile ${cred.alias}`;
+      return `wrangler whoami --profile ${alias}`;
     case 'codex':
-      return `codex auth use ${cred.alias}`;
+      return `codex auth use ${alias}`;
     case 'claude':
-      return `claude auth use ${cred.alias}`;
+      return `claude auth use ${alias}`;
     case 'npm':
-      return `npm config set _authToken $(os-keyring get ${cred.alias})`;
+      return `npm config set _authToken $(os-keyring get ${alias})`;
     case 'aws':
-      return `export AWS_PROFILE=${cred.alias}`;
+      return `export AWS_PROFILE=${alias}`;
     case 'docker':
-      return `docker login --username ${cred.alias}`;
+      return `docker login --username ${alias}`;
+    default:
+      return `${tool} use ${alias}`;
   }
 }
 
 export function OpenSwitchConsole() {
-  const [activeEnv, setActiveEnv] = useState('personal');
+  const [state, setState] = useState<AppState | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [wsOpen, setWsOpen] = useState(false);
-  const [bindings, setBindings] = useState<BindingsByEnv>(INITIAL_BINDINGS);
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToast] = useState<Toast | null>(null);
   const [hoverChip, setHoverChip] = useState<string | null>(null);
-
-  const [density, setDensity] = useState<Density>('comfortable');
   const [cliOpen, setCliOpen] = useState(true);
-  const [tweaksVisible, setTweaksVisible] = useState(false);
+  const density: Density = 'comfortable';
 
   const toastTimer = useRef<number | null>(null);
-  const showToast = (m: string) => {
-    setToast(m);
+  const showToast = useCallback((text: string, ok = true) => {
+    setToast({ text, ok });
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), 2200);
-  };
-
-  useEffect(() => {
-    const onMsg = (ev: MessageEvent) => {
-      const d = ev.data;
-      if (!d || typeof d !== 'object') return;
-      if (d.type === '__activate_edit_mode') setTweaksVisible(true);
-      if (d.type === '__deactivate_edit_mode') setTweaksVisible(false);
-    };
-    window.addEventListener('message', onMsg);
-    try {
-      window.parent.postMessage({ type: '__edit_mode_available' }, '*');
-    } catch {
-      /* noop */
-    }
-    return () => window.removeEventListener('message', onMsg);
+    toastTimer.current = window.setTimeout(() => setToast(null), 2400);
   }, []);
 
-  const env = OS_ENVS_BY_ID[activeEnv];
-  const envBindings = bindings[activeEnv];
+  // Initial load.
+  useEffect(() => {
+    api
+      .getState()
+      .then(setState)
+      .catch((e) => setLoadError(describe(e)));
+  }, []);
+
+  if (loadError) {
+    return (
+      <div style={styles.root}>
+        <div style={styles.errorPane}>
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>
+            Couldn't reach the OpenSwitch backend.
+          </div>
+          <div style={{ color: OS_TOKENS.inkMute, marginBottom: 12 }}>
+            This UI runs inside the Tauri shell — start it with{' '}
+            <code style={{ fontFamily: OS_TOKENS.mono }}>npm run tauri:dev</code>.
+            Plain <code style={{ fontFamily: OS_TOKENS.mono }}>vite</code>{' '}
+            won't have the Rust commands available.
+          </div>
+          <pre
+            style={{
+              fontFamily: OS_TOKENS.mono,
+              fontSize: 11.5,
+              background: OS_TOKENS.sunken,
+              padding: 10,
+              borderRadius: 6,
+              overflow: 'auto',
+              margin: 0,
+            }}
+          >
+            {loadError}
+          </pre>
+        </div>
+      </div>
+    );
+  }
+
+  if (!state) {
+    return (
+      <div style={styles.root}>
+        <div style={styles.loading}>Loading…</div>
+      </div>
+    );
+  }
+
+  const env =
+    state.envs.find((e) => e.id === state.active_env) ?? state.envs[0];
+  const envBindings = env?.bindings ?? {};
   const boundCount = Object.values(envBindings).filter(Boolean).length;
 
-  const activateCred = (toolId: ToolId, credId: string) => {
-    setBindings((prev) => ({
-      ...prev,
-      [activeEnv]: { ...prev[activeEnv], [toolId]: credId },
-    }));
-    const cred = OS_POOL_BY_ID[credId];
-    const tool = OS_TOOLS_BY_ID[toolId];
-    showToast(`${tool.cli} → ${cred.alias}`);
-  };
-
-  const switchEnv = (envId: string) => {
-    setActiveEnv(envId);
-    setWsOpen(false);
-    const e = OS_ENVS_BY_ID[envId];
-    const n = Object.values(bindings[envId]).filter(Boolean).length;
-    showToast(`Switched to ${e.name} · ${n} tools`);
-  };
-
-  const cliLines: CliLine[] = OS_TOOLS.map((t) => {
-    const credId = envBindings[t.id];
-    const cred = credId ? OS_POOL_BY_ID[credId] : null;
-    if (!cred) {
-      return { prompt: '#', text: `${t.cli} — unbound`, comment: true };
+  const handleActivate = async (tool: Tool, cred: Credential) => {
+    try {
+      const r: SwitchOutcome = await api.activateCredential(
+        env.id,
+        tool.id,
+        cred.id,
+      );
+      setState(r.state);
+      showToast(`${tool.cli} → ${cred.alias}`);
+    } catch (e) {
+      showToast(`${tool.cli}: ${describe(e)}`, false);
     }
-    return { prompt: '$', text: cliCommandFor(t.id, cred) };
+  };
+
+  const handleSwitchEnv = async (envId: string) => {
+    setWsOpen(false);
+    try {
+      const r: EnvSwitchOutcome = await api.switchEnvironment(envId);
+      setState(r.state);
+      const target = r.state.envs.find((e) => e.id === envId);
+      const errs = r.outcomes.filter((o) => o.alias.startsWith('ERROR:'));
+      if (errs.length === 0) {
+        showToast(
+          `Switched to ${target?.name ?? envId} · ${r.outcomes.length} tools`,
+        );
+      } else {
+        showToast(
+          `Switched to ${target?.name ?? envId}, ${errs.length} tool(s) failed`,
+          false,
+        );
+      }
+    } catch (e) {
+      showToast(describe(e), false);
+    }
+  };
+
+  const handleAdd = async (tool: Tool) => {
+    const alias = window.prompt(
+      `Snapshot the current ${tool.cli} config into the pool. Alias?`,
+    );
+    if (!alias) return;
+    try {
+      const next = await api.importCredential(tool.id, alias.trim());
+      setState(next);
+      showToast(`Imported ${tool.cli} → ${alias.trim()}`);
+    } catch (e) {
+      showToast(`Import ${tool.cli}: ${describe(e)}`, false);
+    }
+  };
+
+  const cliLines = state.tools.map((t) => {
+    const credId = envBindings[t.id];
+    const cred = credId ? state.pool.find((c) => c.id === credId) : null;
+    if (!cred) return { prompt: '#', text: `${t.cli} — unbound`, comment: true };
+    return { prompt: '$', text: cliCommandFor(t.id, cred.alias) };
   });
 
   return (
     <div style={styles.root} onClick={() => setWsOpen(false)}>
-      {/* Topbar */}
       <div style={styles.topbar} onClick={(e) => e.stopPropagation()}>
-        <button style={styles.wsBtn(wsOpen)} onClick={() => setWsOpen((v) => !v)}>
+        <button
+          style={styles.wsBtn(wsOpen)}
+          onClick={() => setWsOpen((v) => !v)}
+        >
           <span style={styles.wsAvatar}>{env.name[0]}</span>
           <span style={styles.wsName}>{env.name}</span>
           <span style={styles.wsChevron}>▾</span>
@@ -641,24 +609,30 @@ export function OpenSwitchConsole() {
             <span style={styles.kbd}>K</span>
           </span>
         </div>
-        <button style={styles.topBtn}>
+        <button
+          style={styles.topBtn}
+          onClick={() =>
+            showToast(
+              'Use the “+ add <tool>” button in any column to import its current config.',
+            )
+          }
+        >
           <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
           Add credential
         </button>
       </div>
 
-      {/* Workspace dropdown */}
       {wsOpen && (
         <div style={styles.wsMenu} onClick={(e) => e.stopPropagation()}>
           <div style={styles.wsMenuLabel}>Switch environment</div>
-          {OS_ENVS.map((e) => {
-            const isActive = e.id === activeEnv;
-            const n = Object.values(bindings[e.id]).filter(Boolean).length;
+          {state.envs.map((e) => {
+            const isActive = e.id === env.id;
+            const n = Object.values(e.bindings).filter(Boolean).length;
             return (
               <div
                 key={e.id}
                 style={styles.wsMenuItem(isActive)}
-                onClick={() => switchEnv(e.id)}
+                onClick={() => handleSwitchEnv(e.id)}
               >
                 <span
                   style={{
@@ -684,9 +658,7 @@ export function OpenSwitchConsole() {
             );
           })}
           <div style={styles.wsMenuSep} />
-          <div
-            style={{ ...styles.wsMenuItem(false), color: OS_TOKENS.inkSoft }}
-          >
+          <div style={{ ...styles.wsMenuItem(false), color: OS_TOKENS.inkSoft }}>
             <span
               style={{
                 ...styles.wsAvatar,
@@ -701,9 +673,7 @@ export function OpenSwitchConsole() {
             </span>
             <span>New environment…</span>
           </div>
-          <div
-            style={{ ...styles.wsMenuItem(false), color: OS_TOKENS.inkSoft }}
-          >
+          <div style={{ ...styles.wsMenuItem(false), color: OS_TOKENS.inkSoft }}>
             <span
               style={{
                 ...styles.wsAvatar,
@@ -721,7 +691,6 @@ export function OpenSwitchConsole() {
         </div>
       )}
 
-      {/* Sub header */}
       <div style={styles.subbar}>
         <div>
           <h1 style={styles.envTitle}>{env.name}</h1>
@@ -729,19 +698,20 @@ export function OpenSwitchConsole() {
         </div>
         <div style={styles.subMeta}>
           <span>
-            {boundCount}/{OS_TOOLS.length} tools bound
+            {boundCount}/{state.tools.length} tools bound
           </span>
           <span style={{ opacity: 0.4 }}>·</span>
-          <span>{OS_POOL.length} credentials in pool</span>
+          <span>{state.pool.length} credentials in pool</span>
         </div>
       </div>
 
-      {/* Tool columns */}
-      <div style={styles.cols(density)}>
-        {OS_TOOLS.map((t) => {
-          const creds = osCredsForTool(t.id);
+      <div style={styles.cols(density, state.tools.length)}>
+        {state.tools.map((t) => {
+          const creds = credsForTool(state, t.id);
           const activeCredId = envBindings[t.id];
-          const activeCred = activeCredId ? OS_POOL_BY_ID[activeCredId] : null;
+          const activeCred = activeCredId
+            ? state.pool.find((c) => c.id === activeCredId)
+            : null;
           return (
             <div key={t.id} style={styles.col(density)}>
               <div style={styles.colHead}>
@@ -766,7 +736,7 @@ export function OpenSwitchConsole() {
                 </div>
                 {activeCred && (
                   <div style={styles.activeMeta}>
-                    added {osFmtDate(activeCred.addedISO)}
+                    added {fmtDate(activeCred.addedISO)}
                   </div>
                 )}
               </div>
@@ -785,70 +755,75 @@ export function OpenSwitchConsole() {
                 </span>
               </div>
               <div style={styles.poolList}>
-                {creds.map((c) => {
-                  const isActive = c.id === activeCredId;
-                  const hoverKey = `${t.id}:${c.id}`;
-                  const usedInEnvs = OS_ENVS.filter(
-                    (e) => bindings[e.id][t.id] === c.id,
-                  ).length;
-                  return (
-                    <div
-                      key={c.id}
-                      style={styles.chip(isActive, hoverChip === hoverKey)}
-                      onMouseEnter={() => setHoverChip(hoverKey)}
-                      onMouseLeave={() => setHoverChip(null)}
-                      onClick={() => !isActive && activateCred(t.id, c.id)}
-                      title={
-                        isActive
-                          ? 'Currently active'
-                          : `Activate ${c.alias} for ${env.name}`
-                      }
-                    >
-                      <span style={styles.chipDot(usedInEnvs > 0)} />
-                      <span
-                        style={{
-                          flex: 1,
-                          minWidth: 0,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
+                {creds.length === 0 ? (
+                  <div style={styles.poolEmpty}>
+                    no credentials yet — use “+ add {t.name}” to import the live
+                    config
+                  </div>
+                ) : (
+                  creds.map((c) => {
+                    const isActive = c.id === activeCredId;
+                    const hoverKey = `${t.id}:${c.id}`;
+                    const usedInEnvs = state.envs.filter(
+                      (e) => e.bindings[t.id] === c.id,
+                    ).length;
+                    return (
+                      <div
+                        key={c.id}
+                        style={styles.chip(isActive, hoverChip === hoverKey)}
+                        onMouseEnter={() => setHoverChip(hoverKey)}
+                        onMouseLeave={() => setHoverChip(null)}
+                        onClick={() => !isActive && handleActivate(t, c)}
+                        title={
+                          isActive
+                            ? 'Currently active'
+                            : `Activate ${c.alias} for ${env.name}`
+                        }
                       >
-                        {c.alias}
-                      </span>
-                      {isActive && (
+                        <span style={styles.chipDot(usedInEnvs > 0)} />
                         <span
                           style={{
-                            fontSize: 10,
-                            color: OS_TOKENS.accent,
-                            fontFamily: OS_TOKENS.mono,
+                            flex: 1,
+                            minWidth: 0,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
                           }}
                         >
-                          active
+                          {c.alias}
                         </span>
-                      )}
-                      {!isActive && usedInEnvs > 0 && (
-                        <span style={styles.chipMeta}>in {usedInEnvs}</span>
-                      )}
-                    </div>
-                  );
-                })}
+                        {isActive && (
+                          <span
+                            style={{
+                              fontSize: 10,
+                              color: OS_TOKENS.accent,
+                              fontFamily: OS_TOKENS.mono,
+                            }}
+                          >
+                            active
+                          </span>
+                        )}
+                        {!isActive && usedInEnvs > 0 && (
+                          <span style={styles.chipMeta}>in {usedInEnvs}</span>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
               </div>
-              <button style={styles.addCred}>+ add {t.name}</button>
+              <button style={styles.addCred} onClick={() => handleAdd(t)}>
+                + add {t.name}
+              </button>
             </div>
           );
         })}
       </div>
 
-      {/* CLI preview drawer */}
       <div style={styles.drawer(cliOpen)}>
-        <div
-          style={styles.drawerHead}
-          onClick={() => setCliOpen((v) => !v)}
-        >
+        <div style={styles.drawerHead} onClick={() => setCliOpen((v) => !v)}>
           <span style={{ color: '#5b8a72' }}>›</span>
           <span style={styles.drawerLabel}>
-            CLI preview — commands run on switch
+            CLI preview — commands that the switch maps to
           </span>
           <span
             style={{
@@ -884,69 +859,10 @@ export function OpenSwitchConsole() {
         )}
       </div>
 
-      {/* Tweaks panel */}
-      {tweaksVisible && (
-        <div style={styles.tweaks}>
-          <div style={styles.tweakHead}>
-            <span style={{ fontSize: 13 }}>Tweaks</span>
-            <span
-              style={{
-                marginLeft: 'auto',
-                fontSize: 10.5,
-                color: OS_TOKENS.inkMute,
-                fontFamily: OS_TOKENS.mono,
-              }}
-            >
-              OpenSwitch
-            </span>
-          </div>
-          <div style={styles.tweakBody}>
-            <div style={styles.tweakRow}>
-              <span style={styles.tweakLabel}>Density</span>
-              <div style={styles.seg}>
-                {(['compact', 'comfortable'] as const).map((d) => (
-                  <button
-                    key={d}
-                    style={styles.segBtn(density === d)}
-                    onClick={() => setDensity(d)}
-                  >
-                    {d === 'compact' ? 'Compact' : 'Comfortable'}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div style={styles.tweakRow}>
-              <span style={styles.tweakLabel}>CLI preview</span>
-              <button
-                style={styles.toggle(cliOpen)}
-                onClick={() => setCliOpen((v) => !v)}
-              >
-                <span style={styles.toggleKnob(cliOpen)} />
-              </button>
-            </div>
-            <div
-              style={{
-                fontSize: 11,
-                color: OS_TOKENS.inkMute,
-                lineHeight: 1.5,
-                marginTop: 4,
-                borderTop: `1px solid ${OS_TOKENS.lineSoft}`,
-                paddingTop: 8,
-              }}
-            >
-              Click any chip in a tool's pool to activate it for{' '}
-              <b>{env.name}</b>. Use the workspace switcher (top-left) to flip
-              the whole environment.
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Toast */}
       {toast && (
         <div style={styles.toast}>
-          <span style={styles.toastDot} />
-          {toast}
+          <span style={styles.toastDot(toast.ok)} />
+          {toast.text}
         </div>
       )}
     </div>
