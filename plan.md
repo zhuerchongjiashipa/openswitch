@@ -143,7 +143,7 @@ registered in `state.json`.
   - `tsc -b && vite build` clean (strict mode, noUnusedLocals,
     noUnusedParameters)
 
-- [x] **Backup restoration** (`<pending-commit>`)
+- [x] **Backup restoration** (`13c9241`)
   - `switcher::list_backups(paths, tool) -> Vec<BackupEntry { stamp,
     iso, files }>` walks `<app_data>/backups/<tool>/` and parses each
     stamp back into an ISO-8601 display string.
@@ -281,6 +281,8 @@ registered in `state.json`.
 ## Commit log
 
 ```
+13c9241  Add backup history + restore
+f56addf  Add plan.md for handoff
 2cb4f53  Make tool target paths configurable + platform-aware
 2447261  Wire credential + environment CRUD UI
 7b89894  Add Tauri Rust backend for real CLI auth switching
