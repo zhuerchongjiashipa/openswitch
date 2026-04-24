@@ -18,6 +18,6 @@ export const OS_TOKENS = {
   warnSoft: 'oklch(0.95 0.04 70)',
   danger: 'oklch(0.58 0.12 25)',
   dangerSoft: 'oklch(0.95 0.04 25)',
-  sans: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+  sans: '"Inter", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
   mono: '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace',
 } as const;

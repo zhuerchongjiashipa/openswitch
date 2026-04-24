@@ -12,6 +12,10 @@ import {
 } from './api';
 import { OS_TOKENS } from './data';
 import { PathsModal } from './PathsModal';
+import { AddEnvironmentDialog } from './AddEnvironmentDialog';
+import { AddCredentialDialog } from './AddCredentialDialog';
+import { BrandTile } from './BrandTile';
+import { Lang, useLang } from './i18n';
 
 type Density = 'compact' | 'comfortable';
 
@@ -216,19 +220,27 @@ const styles = {
     alignItems: 'center',
     gap: 9,
   } satisfies CSSProperties,
-  colGlyph: {
-    width: 22,
-    height: 22,
-    borderRadius: 5,
-    background: OS_TOKENS.sunken,
+  langSwitch: {
     display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: 10.5,
-    fontFamily: OS_TOKENS.mono,
-    color: OS_TOKENS.inkSoft,
-    fontWeight: 600,
+    padding: 3,
+    borderRadius: 7,
+    background: OS_TOKENS.sunken,
+    border: `1px solid ${OS_TOKENS.lineSoft}`,
+    gap: 2,
   } satisfies CSSProperties,
+  langBtn: (active: boolean): CSSProperties => ({
+    padding: '3px 9px',
+    borderRadius: 5,
+    border: 'none',
+    background: active ? OS_TOKENS.surface : 'transparent',
+    color: active ? OS_TOKENS.ink : OS_TOKENS.inkMute,
+    fontSize: 11.5,
+    fontWeight: active ? 600 : 500,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    boxShadow: active ? '0 1px 2px rgba(0,0,0,0.04)' : 'none',
+    letterSpacing: '-0.005em',
+  }),
   colName: {
     fontSize: 13.5,
     fontWeight: 600,
@@ -489,6 +501,10 @@ export function OpenSwitchConsole() {
   const [hoverMenu, setHoverMenu] = useState<string | null>(null);
   const [editingPathsFor, setEditingPathsFor] = useState<Tool | null>(null);
   const [cliOpen, setCliOpen] = useState(true);
+  const [newEnvOpen, setNewEnvOpen] = useState(false);
+  const [addCredFor, setAddCredFor] = useState<Tool | null>(null);
+  const [addCredOpen, setAddCredOpen] = useState(false);
+  const { lang, t, setLang } = useLang();
   const density: Density = 'comfortable';
 
   const toastTimer = useRef<number | null>(null);
@@ -586,18 +602,9 @@ export function OpenSwitchConsole() {
     }
   };
 
-  const handleAdd = async (tool: Tool) => {
-    const alias = window.prompt(
-      `Snapshot the current ${tool.cli} config into the pool. Alias?`,
-    );
-    if (!alias) return;
-    try {
-      const next = await api.importCredential(tool.id, alias.trim());
-      setState(next);
-      showToast(`Imported ${tool.cli} → ${alias.trim()}`);
-    } catch (e) {
-      showToast(`Import ${tool.cli}: ${describe(e)}`, false);
-    }
+  const handleAdd = (tool: Tool | null) => {
+    setAddCredFor(tool);
+    setAddCredOpen(true);
   };
 
   const handleRemove = async (tool: Tool, cred: Credential) => {
@@ -614,27 +621,9 @@ export function OpenSwitchConsole() {
     }
   };
 
-  const handleNewEnv = async () => {
+  const handleNewEnv = () => {
     setWsOpen(false);
-    const name = window.prompt('New environment name?');
-    if (!name) return;
-    const id = name
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)/g, '');
-    if (!id) {
-      showToast('Invalid environment name', false);
-      return;
-    }
-    const hint = window.prompt('Short description (optional)?', '') ?? '';
-    try {
-      const next = await api.addEnvironment(id, name.trim(), hint.trim());
-      setState(next);
-      showToast(`Created ${name.trim()}`);
-    } catch (e) {
-      showToast(describe(e), false);
-    }
+    setNewEnvOpen(true);
   };
 
   const handleRemoveEnv = async (envId: string, envName: string) => {
@@ -648,11 +637,16 @@ export function OpenSwitchConsole() {
     }
   };
 
-  const cliLines = state.tools.map((t) => {
-    const credId = envBindings[t.id];
+  const cliLines = state.tools.map((tool) => {
+    const credId = envBindings[tool.id];
     const cred = credId ? state.pool.find((c) => c.id === credId) : null;
-    if (!cred) return { prompt: '#', text: `${t.cli} — unbound`, comment: true };
-    return { prompt: '$', text: cliCommandFor(t.id, cred.alias) };
+    if (!cred)
+      return {
+        prompt: '#',
+        text: t.cliPreviewUnboundLine(tool.cli),
+        comment: true,
+      };
+    return { prompt: '$', text: cliCommandFor(tool.id, cred.alias) };
   });
 
   return (
@@ -676,7 +670,7 @@ export function OpenSwitchConsole() {
 
         <div style={styles.search}>
           <span style={{ opacity: 0.6 }}>⌕</span>
-          <span>Search credentials or tools</span>
+          <span>{t.searchPlaceholder}</span>
           <span
             style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }}
           >
@@ -684,22 +678,31 @@ export function OpenSwitchConsole() {
             <span style={styles.kbd}>K</span>
           </span>
         </div>
-        <button
-          style={styles.topBtn}
-          onClick={() =>
-            showToast(
-              'Use the “+ add <tool>” button in any column to import its current config.',
-            )
-          }
+        <div
+          style={styles.langSwitch}
+          role="group"
+          aria-label="Language"
         >
+          {(['en', 'zh'] as Lang[]).map((l) => (
+            <button
+              key={l}
+              type="button"
+              style={styles.langBtn(lang === l)}
+              onClick={() => setLang(l)}
+            >
+              {l === 'en' ? 'EN' : '中文'}
+            </button>
+          ))}
+        </div>
+        <button style={styles.topBtn} onClick={() => handleAdd(null)}>
           <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
-          Add credential
+          {t.addCredential}
         </button>
       </div>
 
       {wsOpen && (
         <div style={styles.wsMenu} onClick={(e) => e.stopPropagation()}>
-          <div style={styles.wsMenuLabel}>Switch environment</div>
+          <div style={styles.wsMenuLabel}>{t.workspaceSwitch}</div>
           {state.envs.map((e) => {
             const isActive = e.id === env.id;
             const n = Object.values(e.bindings).filter(Boolean).length;
@@ -763,7 +766,7 @@ export function OpenSwitchConsole() {
             >
               +
             </span>
-            <span>New environment…</span>
+            <span>{t.newEnvironment}</span>
           </div>
         </div>
       )}
@@ -774,34 +777,38 @@ export function OpenSwitchConsole() {
           <div style={styles.envHint}>{env.hint}</div>
         </div>
         <div style={styles.subMeta}>
-          <span>
-            {boundCount}/{state.tools.length} tools bound
-          </span>
+          <span>{t.toolsBound(boundCount, state.tools.length)}</span>
           <span style={{ opacity: 0.4 }}>·</span>
-          <span>{state.pool.length} credentials in pool</span>
+          <span>{t.poolCount(state.pool.length)}</span>
         </div>
       </div>
 
       <div style={styles.cols(density, state.tools.length)}>
-        {state.tools.map((t) => {
-          const creds = credsForTool(state, t.id);
-          const activeCredId = envBindings[t.id];
+        {state.tools.map((tool) => {
+          const creds = credsForTool(state, tool.id);
+          const activeCredId = envBindings[tool.id];
           const activeCred = activeCredId
             ? state.pool.find((c) => c.id === activeCredId)
             : null;
           return (
-            <div key={t.id} style={styles.col(density)}>
+            <div key={tool.id} style={styles.col(density)}>
               <div style={styles.colHead}>
-                <span style={styles.colGlyph}>{t.glyph}</span>
-                <span style={styles.colName}>{t.name}</span>
-                <span style={styles.colCli}>{t.cli}</span>
+                <BrandTile
+                  toolId={tool.id}
+                  fallbackGlyph={tool.glyph}
+                  size={22}
+                  radius={5}
+                  title={tool.name}
+                />
+                <span style={styles.colName}>{tool.name}</span>
+                <span style={styles.colCli}>{tool.cli}</span>
                 <button
-                  style={styles.colMenu(hoverMenu === t.id)}
-                  onMouseEnter={() => setHoverMenu(t.id)}
+                  style={styles.colMenu(hoverMenu === tool.id)}
+                  onMouseEnter={() => setHoverMenu(tool.id)}
                   onMouseLeave={() => setHoverMenu(null)}
-                  onClick={() => setEditingPathsFor(t)}
-                  title={`Edit target paths for ${t.cli}`}
-                  aria-label={`Edit ${t.name} paths`}
+                  onClick={() => setEditingPathsFor(tool)}
+                  title={`Edit target paths for ${tool.cli}`}
+                  aria-label={`Edit ${tool.name} paths`}
                 >
                   ⋯
                 </button>
@@ -815,20 +822,20 @@ export function OpenSwitchConsole() {
                   }}
                 >
                   {activeCred && <span style={styles.activeDot} />}
-                  {activeCred ? 'Active' : 'Unbound'}
+                  {activeCred ? t.active : t.unbound}
                 </div>
                 <div style={styles.activeAlias(!activeCred)}>
-                  {activeCred ? activeCred.alias : 'no credential'}
+                  {activeCred ? activeCred.alias : t.noCredential}
                 </div>
                 {activeCred && (
                   <div style={styles.activeMeta}>
-                    added {fmtDate(activeCred.addedISO)}
+                    {t.addedOn(fmtDate(activeCred.addedISO))}
                   </div>
                 )}
               </div>
 
               <div style={styles.poolHead}>
-                <span>Pool</span>
+                <span>{t.poolLabel}</span>
                 <span
                   style={{
                     fontFamily: OS_TOKENS.mono,
@@ -842,17 +849,14 @@ export function OpenSwitchConsole() {
               </div>
               <div style={styles.poolList}>
                 {creds.length === 0 ? (
-                  <div style={styles.poolEmpty}>
-                    no credentials yet — use “+ add {t.name}” to import the live
-                    config
-                  </div>
+                  <div style={styles.poolEmpty}>{t.addTool(tool.name)}</div>
                 ) : (
                   creds.map((c) => {
                     const isActive = c.id === activeCredId;
-                    const hoverKey = `${t.id}:${c.id}`;
+                    const hoverKey = `${tool.id}:${c.id}`;
                     const isHovered = hoverChip === hoverKey;
                     const usedInEnvs = state.envs.filter(
-                      (e) => e.bindings[t.id] === c.id,
+                      (e) => e.bindings[tool.id] === c.id,
                     ).length;
                     return (
                       <div
@@ -860,7 +864,7 @@ export function OpenSwitchConsole() {
                         style={styles.chip(isActive, isHovered)}
                         onMouseEnter={() => setHoverChip(hoverKey)}
                         onMouseLeave={() => setHoverChip(null)}
-                        onClick={() => !isActive && handleActivate(t, c)}
+                        onClick={() => !isActive && handleActivate(tool, c)}
                         title={
                           isActive
                             ? 'Currently active'
@@ -887,7 +891,7 @@ export function OpenSwitchConsole() {
                               fontFamily: OS_TOKENS.mono,
                             }}
                           >
-                            active
+                            {t.active.toLowerCase()}
                           </span>
                         )}
                         {!isActive && usedInEnvs > 0 && (
@@ -899,7 +903,7 @@ export function OpenSwitchConsole() {
                           title="Delete credential"
                           onClick={(ev) => {
                             ev.stopPropagation();
-                            handleRemove(t, c);
+                            handleRemove(tool, c);
                           }}
                         >
                           ×
@@ -909,8 +913,8 @@ export function OpenSwitchConsole() {
                   })
                 )}
               </div>
-              <button style={styles.addCred} onClick={() => handleAdd(t)}>
-                + add {t.name}
+              <button style={styles.addCred} onClick={() => handleAdd(tool)}>
+                {t.addTool(tool.name)}
               </button>
             </div>
           );
@@ -920,9 +924,7 @@ export function OpenSwitchConsole() {
       <div style={styles.drawer(cliOpen)}>
         <div style={styles.drawerHead} onClick={() => setCliOpen((v) => !v)}>
           <span style={{ color: '#5b8a72' }}>›</span>
-          <span style={styles.drawerLabel}>
-            CLI preview — commands that the switch maps to
-          </span>
+          <span style={styles.drawerLabel}>{t.cliPreviewTitle}</span>
           <span
             style={{
               marginLeft: 'auto',
@@ -931,14 +933,14 @@ export function OpenSwitchConsole() {
               fontFamily: OS_TOKENS.sans,
             }}
           >
-            {cliOpen ? 'hide' : 'show'} ⌘J
+            {cliOpen ? t.cliPreviewHide : t.cliPreviewShow} ⌘J
           </span>
         </div>
         {cliOpen && (
           <div style={styles.drawerLines}>
             <div style={styles.drawerLine}>
               <span style={styles.drawerComment}>
-                # Switching to {env.name}
+                {t.cliPreviewSwitchingTo(env.name)}
               </span>
             </div>
             {cliLines.map((l, i) => (
@@ -973,6 +975,32 @@ export function OpenSwitchConsole() {
             showToast(`Paths updated for ${editingPathsFor.cli}`);
           }}
           onToast={(msg, ok) => showToast(msg, ok)}
+        />
+      )}
+
+      {newEnvOpen && (
+        <AddEnvironmentDialog
+          state={state}
+          onClose={() => setNewEnvOpen(false)}
+          onDone={(next, ok, msg) => {
+            setState(next);
+            showToast(msg, ok);
+          }}
+        />
+      )}
+
+      {addCredOpen && (
+        <AddCredentialDialog
+          state={state}
+          initialToolId={addCredFor?.id}
+          onClose={() => {
+            setAddCredOpen(false);
+            setAddCredFor(null);
+          }}
+          onDone={(next, ok, msg) => {
+            setState(next);
+            showToast(msg, ok);
+          }}
         />
       )}
     </div>
