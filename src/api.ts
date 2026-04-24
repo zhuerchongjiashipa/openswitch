@@ -4,11 +4,17 @@ export type ToolId = string;
 export type CredId = string;
 export type EnvId = string;
 
+export interface TargetFile {
+  pool_name: string;
+  target: string;
+}
+
 export interface Tool {
   id: ToolId;
   name: string;
   cli: string;
   glyph: string;
+  targets: TargetFile[];
 }
 
 export interface Credential {
@@ -62,6 +68,10 @@ export const api = {
     invoke<SwitchOutcome>('activate_credential', { envId, tool, credId }),
   switchEnvironment: (envId: string) =>
     invoke<EnvSwitchOutcome>('switch_environment', { envId }),
+  updateToolPaths: (tool: string, targets: TargetFile[]) =>
+    invoke<AppState>('update_tool_paths', { tool, targets }),
+  resetToolPaths: (tool: string) =>
+    invoke<AppState>('reset_tool_paths', { tool }),
 };
 
 export function credsForTool(state: AppState, toolId: ToolId): Credential[] {

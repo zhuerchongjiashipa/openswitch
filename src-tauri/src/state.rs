@@ -48,7 +48,10 @@ fn read_or_init(file: &Path) -> Result<AppState> {
         return Ok(s);
     }
     let raw = fs::read(file)?;
-    let state: AppState = serde_json::from_slice(&raw)?;
+    let mut state: AppState = serde_json::from_slice(&raw)?;
+    // Forward-compat: newly-added tools or fresh installs on a different
+    // platform get their default target paths filled in automatically.
+    state.fill_missing_targets();
     Ok(state)
 }
 

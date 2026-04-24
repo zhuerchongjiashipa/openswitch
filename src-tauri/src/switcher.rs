@@ -1,13 +1,9 @@
 //! Per-tool switching logic.
 //!
-//! Model: for each tool we declare a list of target paths (e.g. git →
-//! `~/.gitconfig` + `~/.git-credentials`). Each credential owns a folder
-//! under `<app_data>/pool/<tool>/<alias>/` that mirrors the *file names* of
-//! those targets. Activating a credential copies each present pool file
-//! over its corresponding target, backing up the previous target first.
-//!
-//! The `import` direction goes the other way: pull the live config into
-//! the pool folder so the user can snapshot their current setup.
+//! Each tool carries a list of `TargetFile`s on `AppState::tools`.
+//! Activating a credential copies its pool files onto those targets,
+//! backing up whatever was there first. Importing does the reverse:
+//! snapshots the live targets into a new pool folder.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,74 +11,35 @@ use std::path::{Path, PathBuf};
 use chrono::Utc;
 
 use crate::error::{AppError, Result};
+use crate::model::{TargetFile, Tool};
 use crate::paths::{expand_home, AppPaths};
 
-/// A single file that participates in switching for a tool.
-#[derive(Debug, Clone)]
-pub struct TargetFile {
-    /// File name inside the pool folder, e.g. `.gitconfig`.
-    pub pool_name: &'static str,
-    /// Absolute target path (may start with `~`).
-    pub target: &'static str,
-}
-
-pub fn targets_for(tool: &str) -> &'static [TargetFile] {
-    match tool {
-        "git" => &[
-            TargetFile { pool_name: ".gitconfig",       target: "~/.gitconfig" },
-            TargetFile { pool_name: ".git-credentials", target: "~/.git-credentials" },
-        ],
-        "wrangler" => &[
-            TargetFile { pool_name: "config.toml", target: "~/.wrangler/config/default.toml" },
-        ],
-        "codex" => &[
-            TargetFile { pool_name: "auth.json", target: "~/.codex/auth.json" },
-        ],
-        "claude" => &[
-            TargetFile { pool_name: ".claude.json", target: "~/.claude.json" },
-        ],
-        "npm" => &[
-            TargetFile { pool_name: ".npmrc", target: "~/.npmrc" },
-        ],
-        "aws" => &[
-            TargetFile { pool_name: "credentials", target: "~/.aws/credentials" },
-            TargetFile { pool_name: "config",      target: "~/.aws/config" },
-        ],
-        "docker" => &[
-            TargetFile { pool_name: "config.json", target: "~/.docker/config.json" },
-        ],
-        _ => &[],
-    }
-}
-
-/// Activate a credential: copy its pool files onto the live targets.
-/// Previous target contents are backed up to `<app_data>/backups/...`.
-pub fn activate(paths: &AppPaths, tool: &str, alias: &str) -> Result<Vec<PathBuf>> {
-    let pool_dir = paths.pool_dir(tool, alias);
-    if !pool_dir.exists() {
-        return Err(AppError::NotFound(format!(
-            "pool dir for {tool}/{alias} not found"
+/// Activate `alias` for `tool`: copy pool files onto live targets.
+pub fn activate(paths: &AppPaths, tool: &Tool, alias: &str) -> Result<Vec<PathBuf>> {
+    if tool.targets.is_empty() {
+        return Err(AppError::Invalid(format!(
+            "no targets configured for tool {}",
+            tool.id
         )));
     }
-
-    let targets = targets_for(tool);
-    if targets.is_empty() {
-        return Err(AppError::Invalid(format!("unknown tool: {tool}")));
+    let pool_dir = paths.pool_dir(&tool.id, alias);
+    if !pool_dir.exists() {
+        return Err(AppError::NotFound(format!(
+            "pool dir for {}/{} not found",
+            tool.id, alias
+        )));
     }
 
     let stamp = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
     let mut written = Vec::new();
 
-    for t in targets {
-        let src = pool_dir.join(t.pool_name);
+    for t in &tool.targets {
+        let src = pool_dir.join(&t.pool_name);
         if !src.exists() {
             continue;
         }
-        let dst = expand_home(t.target)?;
-        backup_if_present(paths, tool, &dst, &stamp)?;
-        if let Some(parent) = dst.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        let dst = expand_home(&t.target)?;
+        backup_if_present(paths, &tool.id, &dst, &stamp)?;
         copy_file(&src, &dst)?;
         written.push(dst);
     }
@@ -91,48 +48,77 @@ pub fn activate(paths: &AppPaths, tool: &str, alias: &str) -> Result<Vec<PathBuf
 }
 
 /// Import the tool's current live configuration into the pool as `alias`.
-/// Returns the list of files imported.
-pub fn import_live(paths: &AppPaths, tool: &str, alias: &str) -> Result<Vec<PathBuf>> {
-    let targets = targets_for(tool);
-    if targets.is_empty() {
-        return Err(AppError::Invalid(format!("unknown tool: {tool}")));
+pub fn import_live(paths: &AppPaths, tool: &Tool, alias: &str) -> Result<Vec<PathBuf>> {
+    if tool.targets.is_empty() {
+        return Err(AppError::Invalid(format!(
+            "no targets configured for tool {}",
+            tool.id
+        )));
     }
 
-    let pool_dir = paths.pool_dir(tool, alias);
+    let pool_dir = paths.pool_dir(&tool.id, alias);
     if pool_dir.exists() {
         return Err(AppError::Conflict(format!(
-            "pool entry already exists: {tool}/{alias}"
+            "pool entry already exists: {}/{}",
+            tool.id, alias
         )));
     }
     fs::create_dir_all(&pool_dir)?;
 
     let mut imported = Vec::new();
-    for t in targets {
-        let src = expand_home(t.target)?;
+    for t in &tool.targets {
+        let src = expand_home(&t.target)?;
         if !src.exists() {
             continue;
         }
-        let dst = pool_dir.join(t.pool_name);
+        let dst = pool_dir.join(&t.pool_name);
         copy_file(&src, &dst)?;
         imported.push(dst);
     }
 
     if imported.is_empty() {
-        // Nothing was actually on disk; rollback so we don't leave an empty shell.
         let _ = fs::remove_dir_all(&pool_dir);
         return Err(AppError::NotFound(format!(
-            "no live configuration found for {tool}"
+            "no live configuration found for {}",
+            tool.id
         )));
     }
 
     Ok(imported)
 }
 
-/// Remove a pool entry's folder.
 pub fn remove_pool_entry(paths: &AppPaths, tool: &str, alias: &str) -> Result<()> {
     let pool_dir = paths.pool_dir(tool, alias);
     if pool_dir.exists() {
         fs::remove_dir_all(pool_dir)?;
+    }
+    Ok(())
+}
+
+/// Validation used by `update_tool_paths`: reject empty names, duplicates,
+/// and any slashes inside `pool_name` (which would escape the pool dir).
+pub fn validate_targets(targets: &[TargetFile]) -> Result<()> {
+    use std::collections::HashSet;
+    let mut seen = HashSet::new();
+    for t in targets {
+        if t.pool_name.trim().is_empty() {
+            return Err(AppError::Invalid("pool_name must not be empty".into()));
+        }
+        if t.target.trim().is_empty() {
+            return Err(AppError::Invalid("target must not be empty".into()));
+        }
+        if t.pool_name.contains('/') || t.pool_name.contains('\\') {
+            return Err(AppError::Invalid(format!(
+                "pool_name must be a plain file name, got: {}",
+                t.pool_name
+            )));
+        }
+        if !seen.insert(t.pool_name.clone()) {
+            return Err(AppError::Invalid(format!(
+                "duplicate pool_name: {}",
+                t.pool_name
+            )));
+        }
     }
     Ok(())
 }

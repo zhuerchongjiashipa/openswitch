@@ -11,6 +11,7 @@ import {
   fmtDate,
 } from './api';
 import { OS_TOKENS } from './data';
+import { PathsModal } from './PathsModal';
 
 type Density = 'compact' | 'comfortable';
 
@@ -239,7 +240,7 @@ const styles = {
     whiteSpace: 'nowrap',
   } satisfies CSSProperties,
   colCli: { fontSize: 10.5, color: OS_TOKENS.inkMute, fontFamily: OS_TOKENS.mono } satisfies CSSProperties,
-  colMenu: {
+  colMenu: (hover: boolean): CSSProperties => ({
     width: 22,
     height: 22,
     borderRadius: 5,
@@ -247,9 +248,14 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     cursor: 'pointer',
-    color: OS_TOKENS.inkFaint,
+    color: hover ? OS_TOKENS.ink : OS_TOKENS.inkFaint,
+    background: hover ? OS_TOKENS.sunken : 'transparent',
     fontSize: 14,
-  } satisfies CSSProperties,
+    border: 'none',
+    fontFamily: 'inherit',
+    padding: 0,
+    transition: 'background .1s, color .1s',
+  }),
 
   activeCard: (empty: boolean): CSSProperties => ({
     margin: 10,
@@ -480,6 +486,8 @@ export function OpenSwitchConsole() {
   const [wsOpen, setWsOpen] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const [hoverChip, setHoverChip] = useState<string | null>(null);
+  const [hoverMenu, setHoverMenu] = useState<string | null>(null);
+  const [editingPathsFor, setEditingPathsFor] = useState<Tool | null>(null);
   const [cliOpen, setCliOpen] = useState(true);
   const density: Density = 'comfortable';
 
@@ -787,7 +795,16 @@ export function OpenSwitchConsole() {
                 <span style={styles.colGlyph}>{t.glyph}</span>
                 <span style={styles.colName}>{t.name}</span>
                 <span style={styles.colCli}>{t.cli}</span>
-                <span style={styles.colMenu}>⋯</span>
+                <button
+                  style={styles.colMenu(hoverMenu === t.id)}
+                  onMouseEnter={() => setHoverMenu(t.id)}
+                  onMouseLeave={() => setHoverMenu(null)}
+                  onClick={() => setEditingPathsFor(t)}
+                  title={`Edit target paths for ${t.cli}`}
+                  aria-label={`Edit ${t.name} paths`}
+                >
+                  ⋯
+                </button>
               </div>
 
               <div style={styles.activeCard(!activeCred)}>
@@ -945,6 +962,18 @@ export function OpenSwitchConsole() {
           <span style={styles.toastDot(toast.ok)} />
           {toast.text}
         </div>
+      )}
+
+      {editingPathsFor && (
+        <PathsModal
+          tool={editingPathsFor}
+          onClose={() => setEditingPathsFor(null)}
+          onSaved={(next) => {
+            setState(next);
+            showToast(`Paths updated for ${editingPathsFor.cli}`);
+          }}
+          onError={(msg) => showToast(msg, false)}
+        />
       )}
     </div>
   );

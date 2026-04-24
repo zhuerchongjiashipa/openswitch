@@ -3,7 +3,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::error::{AppError, Result};
-use crate::model::{AppState, Credential, Environment};
+use crate::model::{AppState, Credential, Environment, TargetFile};
 use crate::state::Store;
 use crate::switcher;
 
@@ -88,21 +88,22 @@ pub fn set_active_environment(
     Ok(snap)
 }
 
-/// Register a credential in the pool by importing the tool's *current*
-/// live configuration into a new pool entry tagged with `alias`.
 #[tauri::command]
 pub fn import_credential(
     store: State<'_, Store>,
     tool: String,
     alias: String,
 ) -> Result<AppState> {
-    // Side-effects first (may fail). If it succeeds, update state.
-    switcher::import_live(&store.paths, &tool, &alias)?;
+    // Pull a snapshot of the tool record for the IO side effects.
+    let tool_rec = store
+        .snapshot()
+        .find_tool(&tool)
+        .cloned()
+        .ok_or_else(|| AppError::Invalid(format!("unknown tool: {tool}")))?;
+
+    switcher::import_live(&store.paths, &tool_rec, &alias)?;
 
     let (_, snap) = store.mutate(|s| {
-        if !s.tools.iter().any(|t| t.id == tool) {
-            return Err(AppError::Invalid(format!("unknown tool: {tool}")));
-        }
         if s.pool
             .iter()
             .any(|c| c.tool == tool && c.alias == alias)
@@ -128,13 +129,11 @@ pub fn remove_credential(
     store: State<'_, Store>,
     id: String,
 ) -> Result<AppState> {
-    // Snapshot the credential before mutation so we know its pool location.
     let Some(cred) = store.snapshot().find_cred(&id).cloned() else {
         return Err(AppError::NotFound(format!("credential {id}")));
     };
 
     let (_, snap) = store.mutate(|s| {
-        // Unbind from any environment currently pointing at it.
         for env in s.envs.iter_mut() {
             env.bindings.retain(|_, v| v != &id);
         }
@@ -142,13 +141,11 @@ pub fn remove_credential(
         Ok(())
     })?;
 
-    // Best-effort cleanup of on-disk pool files.
     let _ = switcher::remove_pool_entry(&store.paths, &cred.tool, &cred.alias);
 
     Ok(snap)
 }
 
-/// Activate `cred_id` for `env_id` + `tool`: swap files and record the binding.
 #[tauri::command]
 pub fn activate_credential(
     store: State<'_, Store>,
@@ -156,8 +153,8 @@ pub fn activate_credential(
     tool: String,
     cred_id: String,
 ) -> Result<SwitchOutcome> {
-    // Validate + fetch alias under the read lock, then do IO, then record.
-    let (tool_id, alias) = {
+    // Resolve credential + tool under the lock, then do IO without it held.
+    let (tool_rec, alias) = {
         let snap = store.snapshot();
         let cred = snap
             .find_cred(&cred_id)
@@ -171,20 +168,24 @@ pub fn activate_credential(
         if snap.find_env(&env_id).is_none() {
             return Err(AppError::NotFound(format!("env {env_id}")));
         }
-        (cred.tool.clone(), cred.alias.clone())
+        let tool_rec = snap
+            .find_tool(&tool)
+            .cloned()
+            .ok_or_else(|| AppError::Invalid(format!("unknown tool: {tool}")))?;
+        (tool_rec, cred.alias.clone())
     };
 
-    let written = switcher::activate(&store.paths, &tool_id, &alias)?;
+    let written = switcher::activate(&store.paths, &tool_rec, &alias)?;
 
     let (_, snap) = store.mutate(|s| {
         if let Some(env) = s.find_env_mut(&env_id) {
-            env.bindings.insert(tool_id.clone(), cred_id.clone());
+            env.bindings.insert(tool_rec.id.clone(), cred_id.clone());
         }
         Ok(())
     })?;
 
     Ok(SwitchOutcome {
-        tool: tool_id,
+        tool: tool_rec.id,
         alias,
         written: written
             .into_iter()
@@ -194,8 +195,6 @@ pub fn activate_credential(
     })
 }
 
-/// Activate an entire environment's bindings. Continues on per-tool error
-/// but reports which tools were written.
 #[tauri::command]
 pub fn switch_environment(
     store: State<'_, Store>,
@@ -213,7 +212,11 @@ pub fn switch_environment(
             Some(c) => c.clone(),
             None => continue,
         };
-        match switcher::activate(&store.paths, tool_id, &cred.alias) {
+        let tool_rec = match snap.find_tool(tool_id) {
+            Some(t) => t.clone(),
+            None => continue,
+        };
+        match switcher::activate(&store.paths, &tool_rec, &cred.alias) {
             Ok(written) => outcomes.push(SwitchOutcome {
                 tool: tool_id.clone(),
                 alias: cred.alias.clone(),
@@ -223,16 +226,12 @@ pub fn switch_environment(
                     .collect(),
                 state: snap.clone(),
             }),
-            Err(e) => {
-                // Surface a structured record but keep going. Frontend can
-                // present partial success.
-                outcomes.push(SwitchOutcome {
-                    tool: tool_id.clone(),
-                    alias: format!("ERROR: {e}"),
-                    written: vec![],
-                    state: snap.clone(),
-                });
-            }
+            Err(e) => outcomes.push(SwitchOutcome {
+                tool: tool_id.clone(),
+                alias: format!("ERROR: {e}"),
+                written: vec![],
+                state: snap.clone(),
+            }),
         }
     }
 
@@ -248,8 +247,44 @@ pub fn switch_environment(
     })
 }
 
+/// Replace the target-file list for a tool. Used by the "edit paths" UI.
+/// Empty `targets` is allowed and resets the tool to platform defaults on
+/// the next load.
+#[tauri::command]
+pub fn update_tool_paths(
+    store: State<'_, Store>,
+    tool: String,
+    targets: Vec<TargetFile>,
+) -> Result<AppState> {
+    switcher::validate_targets(&targets)?;
+    let (_, snap) = store.mutate(|s| {
+        let t = s
+            .find_tool_mut(&tool)
+            .ok_or_else(|| AppError::NotFound(format!("tool {tool}")))?;
+        t.targets = targets;
+        Ok(())
+    })?;
+    Ok(snap)
+}
+
+/// Reset a tool's targets to the platform default for the current OS.
+#[tauri::command]
+pub fn reset_tool_paths(
+    store: State<'_, Store>,
+    tool: String,
+) -> Result<AppState> {
+    let (_, snap) = store.mutate(|s| {
+        let defaults = crate::model::platform_default_targets(&tool);
+        let t = s
+            .find_tool_mut(&tool)
+            .ok_or_else(|| AppError::NotFound(format!("tool {tool}")))?;
+        t.targets = defaults;
+        Ok(())
+    })?;
+    Ok(snap)
+}
+
 fn next_cred_id(s: &AppState) -> String {
-    // Simple monotonic "cN" ids that remain stable across restarts.
     let mut max = 0u32;
     for c in &s.pool {
         if let Some(rest) = c.id.strip_prefix('c') {

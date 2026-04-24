@@ -33,6 +33,8 @@ pub fn run() {
             commands::remove_credential,
             commands::activate_credential,
             commands::switch_environment,
+            commands::update_tool_paths,
+            commands::reset_tool_paths,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
