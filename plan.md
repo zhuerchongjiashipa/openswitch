@@ -160,7 +160,7 @@ registered in `state.json`.
   - `PathsModal` prop renamed: `onError` → `onToast(msg, ok)` so the
     same channel can carry success + failure messages.
 
-- [x] **Windows CI packaging** (`<pending>`)
+- [x] **Windows CI packaging** (`f69edf2`)
   - `.github/workflows/build-windows.yml`: on push to master, tags
     `v*`, PRs, or manual dispatch — `windows-latest` runner, Node 20,
     stable Rust with `Swatinem/rust-cache`, `npm ci`, `npm run
@@ -294,6 +294,7 @@ registered in `state.json`.
 ## Commit log
 
 ```
+f69edf2  Add Windows build workflow
 13c9241  Add backup history + restore
 f56addf  Add plan.md for handoff
 2cb4f53  Make tool target paths configurable + platform-aware
