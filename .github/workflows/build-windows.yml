@@ -2,7 +2,6 @@ name: Build Windows
 
 on:
   push:
-    branches: [master]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
@@ -57,34 +56,6 @@ jobs:
             src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
           retention-days: 14
-
-      # Rolling "latest" pre-release: every push to master replaces the
-      # previous one so there's always a downloadable build in Releases.
-      - name: Delete previous rolling release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-        continue-on-error: true
-        shell: bash
-        run: gh release delete latest --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish rolling release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: Latest build (master)
-          prerelease: true
-          make_latest: 'false'
-          body: |
-            Automatic build from `master` @ ${{ github.sha }}.
-
-            **Not a stable release** — this tag is replaced on every push.
-            For pinned versions, look at the other entries on the Releases
-            page (tags `v*`).
-          files: |
-            src-tauri/target/release/bundle/msi/*.msi
-            src-tauri/target/release/bundle/nsis/*.exe
 
       - name: Attach to tag release
         if: startsWith(github.ref, 'refs/tags/v')
