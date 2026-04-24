@@ -241,7 +241,7 @@ function AddEnvironmentDialog({ onClose }) {
   return (
     <Dialog width={560}>
       <DialogHeader
-        title="New environment"
+        title="New environment · 添加环境"
         subtitle="An environment is a named bundle of credential bindings you can flip to as a unit."
         onClose={onClose}
       />
@@ -348,8 +348,8 @@ function AddEnvironmentDialog({ onClose }) {
   );
 }
 
-// ── Add Credential ──
-function AddCredentialDialog({ onClose, initialToolId = 'codex' }) {
+// ── Add Pool Item ──
+function AddPoolDialog({ onClose, initialToolId = 'codex' }) {
   const [toolId, setToolId] = React.useState(initialToolId);
   const [alias, setAlias]   = React.useState('');
   const [token, setToken]   = React.useState('');
@@ -379,8 +379,8 @@ function AddCredentialDialog({ onClose, initialToolId = 'codex' }) {
   return (
     <Dialog width={580}>
       <DialogHeader
-        title="Add credential to pool"
-        subtitle="Credentials live in a shared pool. Environments point at them by alias — rotate the secret here and every env follows."
+        title="Add to pool · 添加 Pool"
+        subtitle="Pool entries are shared credentials. Environments bind to aliases, so rotating secrets here updates all linked envs."
         onClose={onClose}
       />
       <DialogBody>
@@ -579,7 +579,7 @@ function AddCredentialDialog({ onClose, initialToolId = 'codex' }) {
         </span>
         <div style={{flex:1}}/>
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button onClick={onClose} disabled={!alias}>Add to pool</Button>
+        <Button onClick={onClose} disabled={!alias}>Create pool entry</Button>
       </DialogFooter>
     </Dialog>
   );
@@ -622,8 +622,8 @@ function DialogCanvas() {
           <AddEnvironmentDialog onClose={() => {}}/>
         </div>
         <div>
-          <Caption>Dialog · Add credential</Caption>
-          <AddCredentialDialog onClose={() => {}}/>
+          <Caption>Dialog · Add pool</Caption>
+          <AddPoolDialog onClose={() => {}}/>
         </div>
       </div>
     </div>
