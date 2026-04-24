@@ -446,6 +446,76 @@ const styles = {
     color: OS_TOKENS.ink,
     maxWidth: 720,
   } satisfies CSSProperties,
+  modalBackdrop: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(15, 12, 8, 0.32)',
+    zIndex: 110,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  } satisfies CSSProperties,
+  modal: {
+    width: 520,
+    maxWidth: '100%',
+    background: OS_TOKENS.surface,
+    border: `1px solid ${OS_TOKENS.line}`,
+    borderRadius: 12,
+    boxShadow: '0 24px 60px -12px rgba(0,0,0,0.25)',
+    overflow: 'hidden',
+  } satisfies CSSProperties,
+  modalHead: {
+    padding: '14px 16px 12px',
+    borderBottom: `1px solid ${OS_TOKENS.lineSoft}`,
+    display: 'flex',
+    alignItems: 'center',
+  } satisfies CSSProperties,
+  modalBody: { padding: 16, display: 'flex', flexDirection: 'column', gap: 10 } satisfies CSSProperties,
+  modalFooter: {
+    padding: '12px 16px',
+    borderTop: `1px solid ${OS_TOKENS.lineSoft}`,
+    background: OS_TOKENS.bg,
+    display: 'flex',
+    gap: 8,
+    alignItems: 'center',
+  } satisfies CSSProperties,
+  modalInput: {
+    height: 32,
+    border: `1px solid ${OS_TOKENS.line}`,
+    borderRadius: 7,
+    padding: '0 10px',
+    fontFamily: OS_TOKENS.sans,
+    fontSize: 13,
+  } satisfies CSSProperties,
+  modalLabel: {
+    fontSize: 12,
+    color: OS_TOKENS.inkSoft,
+    marginBottom: 4,
+    fontWeight: 500,
+  } satisfies CSSProperties,
+  modalCancel: {
+    marginLeft: 'auto',
+    padding: '7px 12px',
+    borderRadius: 6,
+    border: `1px solid ${OS_TOKENS.line}`,
+    background: OS_TOKENS.surface,
+    cursor: 'pointer',
+    fontSize: 12,
+    color: OS_TOKENS.ink,
+    fontFamily: 'inherit',
+  } satisfies CSSProperties,
+  modalSave: {
+    padding: '7px 14px',
+    borderRadius: 6,
+    border: `1px solid ${OS_TOKENS.accent}`,
+    background: OS_TOKENS.accent,
+    cursor: 'pointer',
+    fontSize: 12,
+    color: '#fff',
+    fontFamily: 'inherit',
+    fontWeight: 500,
+  } satisfies CSSProperties,
 };
 
 interface Toast {
@@ -483,11 +553,25 @@ function cliCommandFor(tool: ToolId, alias: string): string {
 export function OpenSwitchConsole() {
   const [state, setState] = useState<AppState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
   const [wsOpen, setWsOpen] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const [hoverChip, setHoverChip] = useState<string | null>(null);
   const [hoverMenu, setHoverMenu] = useState<string | null>(null);
   const [editingPathsFor, setEditingPathsFor] = useState<Tool | null>(null);
+  const [newEnvOpen, setNewEnvOpen] = useState(false);
+  const [newEnvName, setNewEnvName] = useState('');
+  const [newEnvHint, setNewEnvHint] = useState('');
+  const [addingTool, setAddingTool] = useState<Tool | null>(null);
+  const [newAlias, setNewAlias] = useState('');
+  const [confirmDeleteCred, setConfirmDeleteCred] = useState<{
+    tool: Tool;
+    cred: Credential;
+  } | null>(null);
+  const [confirmDeleteEnv, setConfirmDeleteEnv] = useState<{
+    envId: string;
+    envName: string;
+  } | null>(null);
   const [cliOpen, setCliOpen] = useState(true);
   const density: Density = 'comfortable';
 
@@ -586,39 +670,35 @@ export function OpenSwitchConsole() {
     }
   };
 
-  const handleAdd = async (tool: Tool) => {
-    const alias = window.prompt(
-      `Snapshot the current ${tool.cli} config into the pool. Alias?`,
-    );
-    if (!alias) return;
+  const handleAdd = async () => {
+    if (!addingTool || !newAlias.trim()) return;
     try {
-      const next = await api.importCredential(tool.id, alias.trim());
+      const next = await api.importCredential(addingTool.id, newAlias.trim());
       setState(next);
-      showToast(`Imported ${tool.cli} → ${alias.trim()}`);
+      showToast(`Imported ${addingTool.cli} → ${newAlias.trim()}`);
+      setAddingTool(null);
+      setNewAlias('');
     } catch (e) {
-      showToast(`Import ${tool.cli}: ${describe(e)}`, false);
+      showToast(`Import ${addingTool.cli}: ${describe(e)}`, false);
     }
   };
 
-  const handleRemove = async (tool: Tool, cred: Credential) => {
-    const ok = window.confirm(
-      `Delete credential "${cred.alias}" for ${tool.cli}?\n\nThe pool copy is removed; any environment using it is unbound. Files currently live on disk are not touched.`,
-    );
-    if (!ok) return;
+  const handleRemove = async () => {
+    if (!confirmDeleteCred) return;
+    const { tool, cred } = confirmDeleteCred;
     try {
       const next = await api.removeCredential(cred.id);
       setState(next);
       showToast(`Removed ${tool.cli} → ${cred.alias}`);
+      setConfirmDeleteCred(null);
     } catch (e) {
       showToast(`Remove ${cred.alias}: ${describe(e)}`, false);
     }
   };
 
   const handleNewEnv = async () => {
-    setWsOpen(false);
-    const name = window.prompt('New environment name?');
-    if (!name) return;
-    const id = name
+    if (!newEnvName.trim()) return;
+    const id = newEnvName
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
@@ -627,22 +707,25 @@ export function OpenSwitchConsole() {
       showToast('Invalid environment name', false);
       return;
     }
-    const hint = window.prompt('Short description (optional)?', '') ?? '';
     try {
-      const next = await api.addEnvironment(id, name.trim(), hint.trim());
+      const next = await api.addEnvironment(id, newEnvName.trim(), newEnvHint.trim());
       setState(next);
-      showToast(`Created ${name.trim()}`);
+      showToast(`Created ${newEnvName.trim()}`);
+      setNewEnvOpen(false);
+      setNewEnvName('');
+      setNewEnvHint('');
     } catch (e) {
       showToast(describe(e), false);
     }
   };
 
-  const handleRemoveEnv = async (envId: string, envName: string) => {
-    if (!window.confirm(`Delete environment "${envName}"?`)) return;
+  const handleRemoveEnv = async () => {
+    if (!confirmDeleteEnv) return;
     try {
-      const next = await api.removeEnvironment(envId);
+      const next = await api.removeEnvironment(confirmDeleteEnv.envId);
       setState(next);
-      showToast(`Deleted ${envName}`);
+      showToast(`Deleted ${confirmDeleteEnv.envName}`);
+      setConfirmDeleteEnv(null);
     } catch (e) {
       showToast(describe(e), false);
     }
@@ -676,7 +759,21 @@ export function OpenSwitchConsole() {
 
         <div style={styles.search}>
           <span style={{ opacity: 0.6 }}>⌕</span>
-          <span>Search credentials or tools</span>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search credentials or tools"
+            style={{
+              border: 'none',
+              outline: 'none',
+              background: 'transparent',
+              flex: 1,
+              minWidth: 0,
+              fontFamily: 'inherit',
+              fontSize: 12.5,
+              color: OS_TOKENS.ink,
+            }}
+          />
           <span
             style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }}
           >
@@ -686,11 +783,10 @@ export function OpenSwitchConsole() {
         </div>
         <button
           style={styles.topBtn}
-          onClick={() =>
-            showToast(
-              'Use the “+ add <tool>” button in any column to import its current config.',
-            )
-          }
+          onClick={() => {
+            setAddingTool(state.tools[0] ?? null);
+            setNewAlias('');
+          }}
         >
           <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
           Add credential
@@ -737,7 +833,7 @@ export function OpenSwitchConsole() {
                     title="Delete environment"
                     onClick={(ev) => {
                       ev.stopPropagation();
-                      handleRemoveEnv(e.id, e.name);
+                      setConfirmDeleteEnv({ envId: e.id, envName: e.name });
                     }}
                   >
                     ×
@@ -749,7 +845,10 @@ export function OpenSwitchConsole() {
           <div style={styles.wsMenuSep} />
           <div
             style={{ ...styles.wsMenuItem(false), color: OS_TOKENS.inkSoft }}
-            onClick={handleNewEnv}
+            onClick={() => {
+              setWsOpen(false);
+              setNewEnvOpen(true);
+            }}
           >
             <span
               style={{
@@ -784,7 +883,14 @@ export function OpenSwitchConsole() {
 
       <div style={styles.cols(density, state.tools.length)}>
         {state.tools.map((t) => {
-          const creds = credsForTool(state, t.id);
+          const q = search.trim().toLowerCase();
+          const creds = credsForTool(state, t.id).filter(
+            (c) =>
+              !q ||
+              c.alias.toLowerCase().includes(q) ||
+              t.name.toLowerCase().includes(q) ||
+              t.cli.toLowerCase().includes(q),
+          );
           const activeCredId = envBindings[t.id];
           const activeCred = activeCredId
             ? state.pool.find((c) => c.id === activeCredId)
@@ -899,7 +1005,7 @@ export function OpenSwitchConsole() {
                           title="Delete credential"
                           onClick={(ev) => {
                             ev.stopPropagation();
-                            handleRemove(t, c);
+                            setConfirmDeleteCred({ tool: t, cred: c });
                           }}
                         >
                           ×
@@ -909,7 +1015,13 @@ export function OpenSwitchConsole() {
                   })
                 )}
               </div>
-              <button style={styles.addCred} onClick={() => handleAdd(t)}>
+              <button
+                style={styles.addCred}
+                onClick={() => {
+                  setAddingTool(t);
+                  setNewAlias('');
+                }}
+              >
                 + add {t.name}
               </button>
             </div>
@@ -974,6 +1086,145 @@ export function OpenSwitchConsole() {
           }}
           onToast={(msg, ok) => showToast(msg, ok)}
         />
+      )}
+
+      {newEnvOpen && (
+        <div style={styles.modalBackdrop} onClick={() => setNewEnvOpen(false)}>
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHead}>
+              <div>
+                <div style={{ fontWeight: 600 }}>New environment</div>
+                <div style={{ fontSize: 12, color: OS_TOKENS.inkMute }}>
+                  Create a named bundle of tool bindings.
+                </div>
+              </div>
+            </div>
+            <div style={styles.modalBody}>
+              <div>
+                <div style={styles.modalLabel}>Name</div>
+                <input
+                  autoFocus
+                  value={newEnvName}
+                  onChange={(e) => setNewEnvName(e.target.value)}
+                  style={styles.modalInput}
+                  placeholder="Work · Acme"
+                />
+              </div>
+              <div>
+                <div style={styles.modalLabel}>Description (optional)</div>
+                <input
+                  value={newEnvHint}
+                  onChange={(e) => setNewEnvHint(e.target.value)}
+                  style={styles.modalInput}
+                  placeholder="Acme monorepo & infra"
+                />
+              </div>
+            </div>
+            <div style={styles.modalFooter}>
+              <button style={styles.modalCancel} onClick={() => setNewEnvOpen(false)}>
+                Cancel
+              </button>
+              <button style={styles.modalSave} onClick={handleNewEnv}>
+                Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {addingTool && (
+        <div style={styles.modalBackdrop} onClick={() => setAddingTool(null)}>
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHead}>
+              <div>
+                <div style={{ fontWeight: 600 }}>Add credential</div>
+                <div style={{ fontSize: 12, color: OS_TOKENS.inkMute }}>
+                  Snapshot current {addingTool.cli} config into pool.
+                </div>
+              </div>
+            </div>
+            <div style={styles.modalBody}>
+              <div>
+                <div style={styles.modalLabel}>Alias</div>
+                <input
+                  autoFocus
+                  value={newAlias}
+                  onChange={(e) => setNewAlias(e.target.value)}
+                  style={styles.modalInput}
+                  placeholder="personal / work / staging"
+                />
+              </div>
+            </div>
+            <div style={styles.modalFooter}>
+              <button style={styles.modalCancel} onClick={() => setAddingTool(null)}>
+                Cancel
+              </button>
+              <button style={styles.modalSave} onClick={handleAdd}>
+                Import
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDeleteCred && (
+        <div
+          style={styles.modalBackdrop}
+          onClick={() => setConfirmDeleteCred(null)}
+        >
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHead}>
+              <div style={{ fontWeight: 600 }}>Delete credential</div>
+            </div>
+            <div style={styles.modalBody}>
+              <div style={{ color: OS_TOKENS.inkSoft, fontSize: 13 }}>
+                Delete credential "{confirmDeleteCred.cred.alias}" for{' '}
+                {confirmDeleteCred.tool.cli}?
+              </div>
+              <div style={{ color: OS_TOKENS.inkMute, fontSize: 12 }}>
+                The pool copy will be removed. Any environment using it will
+                become unbound.
+              </div>
+            </div>
+            <div style={styles.modalFooter}>
+              <button
+                style={styles.modalCancel}
+                onClick={() => setConfirmDeleteCred(null)}
+              >
+                Cancel
+              </button>
+              <button style={styles.modalSave} onClick={handleRemove}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDeleteEnv && (
+        <div style={styles.modalBackdrop} onClick={() => setConfirmDeleteEnv(null)}>
+          <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHead}>
+              <div style={{ fontWeight: 600 }}>Delete environment</div>
+            </div>
+            <div style={styles.modalBody}>
+              <div style={{ color: OS_TOKENS.inkSoft, fontSize: 13 }}>
+                Delete environment "{confirmDeleteEnv.envName}"?
+              </div>
+            </div>
+            <div style={styles.modalFooter}>
+              <button
+                style={styles.modalCancel}
+                onClick={() => setConfirmDeleteEnv(null)}
+              >
+                Cancel
+              </button>
+              <button style={styles.modalSave} onClick={handleRemoveEnv}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
