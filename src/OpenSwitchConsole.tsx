@@ -7,11 +7,13 @@ import {
   Tool,
   ToolId,
   api,
-  credsForTool,
-  fmtDate,
 } from './api';
 import { OS_TOKENS } from './data';
 import { PathsModal } from './PathsModal';
+import { TopBar } from './components/TopBar';
+import { EnvironmentMenu } from './components/EnvironmentMenu';
+import { ToolColumn } from './components/ToolColumn';
+import { CliPreviewDrawer } from './components/CliPreviewDrawer';
 
 type Density = 'compact' | 'comfortable';
 
@@ -740,131 +742,29 @@ export function OpenSwitchConsole() {
 
   return (
     <div style={styles.root} onClick={() => setWsOpen(false)}>
-      <div style={styles.topbar} onClick={(e) => e.stopPropagation()}>
-        <button
-          style={styles.wsBtn(wsOpen)}
-          onClick={() => setWsOpen((v) => !v)}
-        >
-          <span style={styles.wsAvatar}>{env.name[0]}</span>
-          <span style={styles.wsName}>{env.name}</span>
-          <span style={styles.wsChevron}>▾</span>
-        </button>
-        <span style={styles.wsDivider} />
-        <div style={styles.brand}>
-          <span style={styles.brandLogo}>
-            <span style={styles.brandLogoInner} />
-          </span>
-          OpenSwitch
-        </div>
-
-        <div style={styles.search}>
-          <span style={{ opacity: 0.6 }}>⌕</span>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search credentials or tools"
-            style={{
-              border: 'none',
-              outline: 'none',
-              background: 'transparent',
-              flex: 1,
-              minWidth: 0,
-              fontFamily: 'inherit',
-              fontSize: 12.5,
-              color: OS_TOKENS.ink,
-            }}
-          />
-          <span
-            style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }}
-          >
-            <span style={styles.kbd}>⌘</span>
-            <span style={styles.kbd}>K</span>
-          </span>
-        </div>
-        <button
-          style={styles.topBtn}
-          onClick={() => {
-            setAddingTool(state.tools[0] ?? null);
-            setNewAlias('');
-          }}
-        >
-          <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
-          Add credential
-        </button>
-      </div>
+      <TopBar
+        env={env}
+        wsOpen={wsOpen}
+        search={search}
+        onToggleWorkspace={() => setWsOpen((v) => !v)}
+        onSearchChange={setSearch}
+        onAddCredential={() => {
+          setAddingTool(state.tools[0] ?? null);
+          setNewAlias('');
+        }}
+      />
 
       {wsOpen && (
-        <div style={styles.wsMenu} onClick={(e) => e.stopPropagation()}>
-          <div style={styles.wsMenuLabel}>Switch environment</div>
-          {state.envs.map((e) => {
-            const isActive = e.id === env.id;
-            const n = Object.values(e.bindings).filter(Boolean).length;
-            const canDelete = state.envs.length > 1;
-            return (
-              <div
-                key={e.id}
-                style={styles.wsMenuItem(isActive)}
-                onClick={() => handleSwitchEnv(e.id)}
-              >
-                <span
-                  style={{
-                    ...styles.wsAvatar,
-                    width: 20,
-                    height: 20,
-                    fontSize: 10,
-                    background: isActive ? OS_TOKENS.accent : OS_TOKENS.sunken,
-                    color: isActive ? '#fff' : OS_TOKENS.inkSoft,
-                    border: isActive ? 'none' : `1px solid ${OS_TOKENS.line}`,
-                  }}
-                >
-                  {e.name[0]}
-                </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 500 }}>{e.name}</div>
-                  <div style={styles.wsMenuSub}>
-                    {e.hint || '—'} · {n} tools
-                  </div>
-                </div>
-                {isActive && <span style={styles.wsMenuCheck}>✓</span>}
-                {canDelete && !isActive && (
-                  <button
-                    style={styles.chipRemove(true)}
-                    aria-label={`Delete ${e.name}`}
-                    title="Delete environment"
-                    onClick={(ev) => {
-                      ev.stopPropagation();
-                      setConfirmDeleteEnv({ envId: e.id, envName: e.name });
-                    }}
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
-            );
-          })}
-          <div style={styles.wsMenuSep} />
-          <div
-            style={{ ...styles.wsMenuItem(false), color: OS_TOKENS.inkSoft }}
-            onClick={() => {
-              setWsOpen(false);
-              setNewEnvOpen(true);
-            }}
-          >
-            <span
-              style={{
-                ...styles.wsAvatar,
-                width: 20,
-                height: 20,
-                background: OS_TOKENS.sunken,
-                color: OS_TOKENS.inkSoft,
-                fontSize: 12,
-              }}
-            >
-              +
-            </span>
-            <span>New environment…</span>
-          </div>
-        </div>
+        <EnvironmentMenu
+          envs={state.envs}
+          activeEnvId={env.id}
+          onSwitchEnv={handleSwitchEnv}
+          onDeleteEnv={(envId, envName) => setConfirmDeleteEnv({ envId, envName })}
+          onNewEnv={() => {
+            setWsOpen(false);
+            setNewEnvOpen(true);
+          }}
+        />
       )}
 
       <div style={styles.subbar}>
@@ -882,192 +782,36 @@ export function OpenSwitchConsole() {
       </div>
 
       <div style={styles.cols(density, state.tools.length)}>
-        {state.tools.map((t) => {
-          const q = search.trim().toLowerCase();
-          const creds = credsForTool(state, t.id).filter(
-            (c) =>
-              !q ||
-              c.alias.toLowerCase().includes(q) ||
-              t.name.toLowerCase().includes(q) ||
-              t.cli.toLowerCase().includes(q),
-          );
-          const activeCredId = envBindings[t.id];
-          const activeCred = activeCredId
-            ? state.pool.find((c) => c.id === activeCredId)
-            : null;
-          return (
-            <div key={t.id} style={styles.col(density)}>
-              <div style={styles.colHead}>
-                <span style={styles.colGlyph}>{t.glyph}</span>
-                <span style={styles.colName}>{t.name}</span>
-                <span style={styles.colCli}>{t.cli}</span>
-                <button
-                  style={styles.colMenu(hoverMenu === t.id)}
-                  onMouseEnter={() => setHoverMenu(t.id)}
-                  onMouseLeave={() => setHoverMenu(null)}
-                  onClick={() => setEditingPathsFor(t)}
-                  title={`Edit target paths for ${t.cli}`}
-                  aria-label={`Edit ${t.name} paths`}
-                >
-                  ⋯
-                </button>
-              </div>
-
-              <div style={styles.activeCard(!activeCred)}>
-                <div
-                  style={{
-                    ...styles.activeLabel,
-                    color: activeCred ? OS_TOKENS.accentInk : OS_TOKENS.inkMute,
-                  }}
-                >
-                  {activeCred && <span style={styles.activeDot} />}
-                  {activeCred ? 'Active' : 'Unbound'}
-                </div>
-                <div style={styles.activeAlias(!activeCred)}>
-                  {activeCred ? activeCred.alias : 'no credential'}
-                </div>
-                {activeCred && (
-                  <div style={styles.activeMeta}>
-                    added {fmtDate(activeCred.addedISO)}
-                  </div>
-                )}
-              </div>
-
-              <div style={styles.poolHead}>
-                <span>Pool</span>
-                <span
-                  style={{
-                    fontFamily: OS_TOKENS.mono,
-                    letterSpacing: 0,
-                    textTransform: 'none',
-                    fontSize: 10.5,
-                  }}
-                >
-                  {creds.length}
-                </span>
-              </div>
-              <div style={styles.poolList}>
-                {creds.length === 0 ? (
-                  <div style={styles.poolEmpty}>
-                    no credentials yet — use “+ add {t.name}” to import the live
-                    config
-                  </div>
-                ) : (
-                  creds.map((c) => {
-                    const isActive = c.id === activeCredId;
-                    const hoverKey = `${t.id}:${c.id}`;
-                    const isHovered = hoverChip === hoverKey;
-                    const usedInEnvs = state.envs.filter(
-                      (e) => e.bindings[t.id] === c.id,
-                    ).length;
-                    return (
-                      <div
-                        key={c.id}
-                        style={styles.chip(isActive, isHovered)}
-                        onMouseEnter={() => setHoverChip(hoverKey)}
-                        onMouseLeave={() => setHoverChip(null)}
-                        onClick={() => !isActive && handleActivate(t, c)}
-                        title={
-                          isActive
-                            ? 'Currently active'
-                            : `Activate ${c.alias} for ${env.name}`
-                        }
-                      >
-                        <span style={styles.chipDot(usedInEnvs > 0)} />
-                        <span
-                          style={{
-                            flex: 1,
-                            minWidth: 0,
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            whiteSpace: 'nowrap',
-                          }}
-                        >
-                          {c.alias}
-                        </span>
-                        {isActive && (
-                          <span
-                            style={{
-                              fontSize: 10,
-                              color: OS_TOKENS.accent,
-                              fontFamily: OS_TOKENS.mono,
-                            }}
-                          >
-                            active
-                          </span>
-                        )}
-                        {!isActive && usedInEnvs > 0 && (
-                          <span style={styles.chipMeta}>in {usedInEnvs}</span>
-                        )}
-                        <button
-                          style={styles.chipRemove(isHovered)}
-                          aria-label={`Delete ${c.alias}`}
-                          title="Delete credential"
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            setConfirmDeleteCred({ tool: t, cred: c });
-                          }}
-                        >
-                          ×
-                        </button>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-              <button
-                style={styles.addCred}
-                onClick={() => {
-                  setAddingTool(t);
-                  setNewAlias('');
-                }}
-              >
-                + add {t.name}
-              </button>
-            </div>
-          );
-        })}
-      </div>
-
-      <div style={styles.drawer(cliOpen)}>
-        <div style={styles.drawerHead} onClick={() => setCliOpen((v) => !v)}>
-          <span style={{ color: '#5b8a72' }}>›</span>
-          <span style={styles.drawerLabel}>
-            CLI preview — commands that the switch maps to
-          </span>
-          <span
-            style={{
-              marginLeft: 'auto',
-              color: '#6b655c',
-              fontSize: 11,
-              fontFamily: OS_TOKENS.sans,
+        {state.tools.map((t) => (
+          <ToolColumn
+            key={t.id}
+            tool={t}
+            state={state}
+            envName={env.name}
+            activeCredId={envBindings[t.id]}
+            search={search}
+            hoverChip={hoverChip}
+            hoverMenu={hoverMenu}
+            density={density}
+            onHoverChip={setHoverChip}
+            onHoverMenu={setHoverMenu}
+            onActivate={handleActivate}
+            onEditPaths={setEditingPathsFor}
+            onRemoveCred={(tool, cred) => setConfirmDeleteCred({ tool, cred })}
+            onAddCred={(tool) => {
+              setAddingTool(tool);
+              setNewAlias('');
             }}
-          >
-            {cliOpen ? 'hide' : 'show'} ⌘J
-          </span>
-        </div>
-        {cliOpen && (
-          <div style={styles.drawerLines}>
-            <div style={styles.drawerLine}>
-              <span style={styles.drawerComment}>
-                # Switching to {env.name}
-              </span>
-            </div>
-            {cliLines.map((l, i) => (
-              <div key={i} style={styles.drawerLine}>
-                <span
-                  style={l.comment ? styles.drawerComment : styles.drawerPrompt}
-                >
-                  {l.prompt}
-                </span>
-                <span style={l.comment ? styles.drawerComment : undefined}>
-                  {l.text}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+          />
+        ))}
       </div>
+
+      <CliPreviewDrawer
+        open={cliOpen}
+        envName={env.name}
+        lines={cliLines}
+        onToggle={() => setCliOpen((v) => !v)}
+      />
 
       {toast && (
         <div style={styles.toast}>
