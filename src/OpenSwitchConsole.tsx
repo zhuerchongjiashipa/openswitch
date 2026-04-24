@@ -972,7 +972,7 @@ export function OpenSwitchConsole() {
             setState(next);
             showToast(`Paths updated for ${editingPathsFor.cli}`);
           }}
-          onError={(msg) => showToast(msg, false)}
+          onToast={(msg, ok) => showToast(msg, ok)}
         />
       )}
     </div>

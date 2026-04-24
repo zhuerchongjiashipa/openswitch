@@ -143,16 +143,24 @@ registered in `state.json`.
   - `tsc -b && vite build` clean (strict mode, noUnusedLocals,
     noUnusedParameters)
 
-### Not yet implemented
+- [x] **Backup restoration** (`<pending-commit>`)
+  - `switcher::list_backups(paths, tool) -> Vec<BackupEntry { stamp,
+    iso, files }>` walks `<app_data>/backups/<tool>/` and parses each
+    stamp back into an ISO-8601 display string.
+  - `switcher::restore_backup(paths, &Tool, stamp)` matches each
+    backup file against the tool's current targets by basename, takes
+    a fresh backup of the current live state first (so the restore
+    itself can be undone), then copies back.
+  - Tauri commands: `list_backups(tool)`, `restore_backup(tool,
+    stamp) -> RestoreOutcome`.
+  - UI: `PathsModal` now has `Paths` / `History` tabs. History lazy-
+    loads on first open; each row shows a localized date + raw stamp
+    + file list + a Restore button. Restore prompts for confirmation
+    before running.
+  - `PathsModal` prop renamed: `onError` → `onToast(msg, ok)` so the
+    same channel can carry success + failure messages.
 
-- [ ] **Backup restoration UI + command**
-  - Backups already land on disk under `<app_data>/backups/…`; nothing
-    reads them back.
-  - Rust side: `list_backups(tool) -> Vec<BackupEntry { stamp, files }>`
-    and `restore_backup(tool, stamp)` that copies the backed-up files
-    back over their targets (taking a fresh backup first).
-  - UI: "History" entry in the column ⋯ menu, or a global drawer per
-    tool, listing timestamps with a "restore" button.
+### Not yet implemented
 
 - [ ] **Per-environment tool selection**
   - Right now `switch_environment` touches every bound tool. Some

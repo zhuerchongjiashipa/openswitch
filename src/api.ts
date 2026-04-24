@@ -52,6 +52,18 @@ export interface EnvSwitchOutcome {
   state: AppState;
 }
 
+export interface BackupEntry {
+  stamp: string;
+  iso: string;
+  files: string[];
+}
+
+export interface RestoreOutcome {
+  tool: string;
+  stamp: string;
+  written: string[];
+}
+
 export const api = {
   getState: () => invoke<AppState>('get_state'),
   addEnvironment: (id: string, name: string, hint: string) =>
@@ -72,6 +84,10 @@ export const api = {
     invoke<AppState>('update_tool_paths', { tool, targets }),
   resetToolPaths: (tool: string) =>
     invoke<AppState>('reset_tool_paths', { tool }),
+  listBackups: (tool: string) =>
+    invoke<BackupEntry[]>('list_backups', { tool }),
+  restoreBackup: (tool: string, stamp: string) =>
+    invoke<RestoreOutcome>('restore_backup', { tool, stamp }),
 };
 
 export function credsForTool(state: AppState, toolId: ToolId): Credential[] {

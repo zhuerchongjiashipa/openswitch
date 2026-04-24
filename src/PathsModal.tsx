@@ -1,6 +1,8 @@
-import { CSSProperties, useState } from 'react';
-import { AppState, TargetFile, Tool, api } from './api';
+import { CSSProperties, useEffect, useState } from 'react';
+import { AppState, BackupEntry, TargetFile, Tool, api } from './api';
 import { OS_TOKENS } from './data';
+
+type Tab = 'paths' | 'history';
 
 const s = {
   backdrop: {
@@ -26,12 +28,30 @@ const s = {
     color: OS_TOKENS.ink,
   } satisfies CSSProperties,
   head: {
-    padding: '16px 20px',
-    borderBottom: `1px solid ${OS_TOKENS.lineSoft}`,
+    padding: '16px 20px 0',
     display: 'flex',
     alignItems: 'baseline',
     gap: 10,
   } satisfies CSSProperties,
+  tabs: {
+    display: 'flex',
+    gap: 2,
+    padding: '10px 20px 0',
+    borderBottom: `1px solid ${OS_TOKENS.lineSoft}`,
+  } satisfies CSSProperties,
+  tab: (active: boolean): CSSProperties => ({
+    padding: '8px 12px',
+    borderRadius: '6px 6px 0 0',
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    fontSize: 12.5,
+    fontWeight: active ? 600 : 500,
+    color: active ? OS_TOKENS.ink : OS_TOKENS.inkMute,
+    borderBottom: `2px solid ${active ? OS_TOKENS.accent : 'transparent'}`,
+    marginBottom: -1,
+  }),
   title: {
     fontSize: 16,
     fontWeight: 600,
@@ -155,13 +175,73 @@ const s = {
     fontSize: 12,
     marginBottom: 4,
   } satisfies CSSProperties,
+
+  historyBody: {
+    padding: '14px 20px 16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+  } satisfies CSSProperties,
+  historyLead: {
+    fontSize: 12.5,
+    color: OS_TOKENS.inkSoft,
+    lineHeight: 1.5,
+    marginBottom: 6,
+  } satisfies CSSProperties,
+  historyRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    padding: '10px 12px',
+    border: `1px solid ${OS_TOKENS.line}`,
+    borderRadius: 8,
+    background: OS_TOKENS.surface,
+  } satisfies CSSProperties,
+  historyWhen: {
+    fontSize: 13,
+    fontWeight: 500,
+    color: OS_TOKENS.ink,
+  } satisfies CSSProperties,
+  historyStamp: {
+    fontSize: 10.5,
+    color: OS_TOKENS.inkMute,
+    fontFamily: OS_TOKENS.mono,
+    marginTop: 2,
+  } satisfies CSSProperties,
+  historyFiles: {
+    fontSize: 11,
+    color: OS_TOKENS.inkMute,
+    fontFamily: OS_TOKENS.mono,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  } satisfies CSSProperties,
+  restoreBtn: {
+    marginLeft: 'auto',
+    padding: '6px 12px',
+    borderRadius: 6,
+    border: `1px solid ${OS_TOKENS.line}`,
+    background: OS_TOKENS.surface,
+    cursor: 'pointer',
+    fontSize: 12,
+    color: OS_TOKENS.ink,
+    fontFamily: 'inherit',
+    fontWeight: 500,
+  } satisfies CSSProperties,
+  historyEmpty: {
+    padding: '32px 12px',
+    textAlign: 'center',
+    color: OS_TOKENS.inkMute,
+    fontSize: 12.5,
+    fontStyle: 'italic',
+  } satisfies CSSProperties,
 };
 
 interface Props {
   tool: Tool;
   onClose: () => void;
   onSaved: (next: AppState) => void;
-  onError: (msg: string) => void;
+  onToast: (msg: string, ok: boolean) => void;
 }
 
 function describe(err: unknown): string {
@@ -170,12 +250,73 @@ function describe(err: unknown): string {
   return JSON.stringify(err);
 }
 
-export function PathsModal({ tool, onClose, onSaved, onError }: Props) {
+function fmtBackupWhen(iso: string, stamp: string): string {
+  if (iso) {
+    const d = new Date(iso);
+    if (!isNaN(d.getTime())) {
+      return d.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    }
+  }
+  return stamp;
+}
+
+export function PathsModal({ tool, onClose, onSaved, onToast }: Props) {
+  const [tab, setTab] = useState<Tab>('paths');
   const [rows, setRows] = useState<TargetFile[]>(() =>
     tool.targets.map((t) => ({ ...t })),
   );
   const [saving, setSaving] = useState(false);
   const [localErr, setLocalErr] = useState<string | null>(null);
+
+  const [backups, setBackups] = useState<BackupEntry[] | null>(null);
+  const [historyErr, setHistoryErr] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState<string | null>(null);
+
+  const loadBackups = async () => {
+    setHistoryErr(null);
+    try {
+      const list = await api.listBackups(tool.id);
+      setBackups(list);
+    } catch (e) {
+      setHistoryErr(describe(e));
+      setBackups([]);
+    }
+  };
+
+  useEffect(() => {
+    if (tab === 'history' && backups === null) {
+      loadBackups();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  const handleRestore = async (b: BackupEntry) => {
+    if (
+      !window.confirm(
+        `Restore ${tool.cli} to the state from ${fmtBackupWhen(b.iso, b.stamp)}?\n\nCurrent files are backed up first so the restore can itself be undone.`,
+      )
+    )
+      return;
+    setRestoring(b.stamp);
+    try {
+      await api.restoreBackup(tool.id, b.stamp);
+      onToast(`Restored ${tool.cli} from ${fmtBackupWhen(b.iso, b.stamp)}`, true);
+      onClose();
+    } catch (e) {
+      setHistoryErr(describe(e));
+    } finally {
+      setRestoring(null);
+      // The restore itself created a new backup; refresh the list if the
+      // user reopens the History tab.
+      setBackups(null);
+    }
+  };
 
   const setRow = (i: number, patch: Partial<TargetFile>) => {
     setRows((rs) => rs.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
@@ -215,7 +356,7 @@ export function PathsModal({ tool, onClose, onSaved, onError }: Props) {
       onSaved(next);
       onClose();
     } catch (e) {
-      onError(describe(e));
+      onToast(describe(e), false);
     }
   };
 
@@ -223,10 +364,22 @@ export function PathsModal({ tool, onClose, onSaved, onError }: Props) {
     <div style={s.backdrop} onClick={onClose}>
       <div style={s.sheet} onClick={(ev) => ev.stopPropagation()}>
         <div style={s.head}>
-          <h2 style={s.title}>{tool.name} — target paths</h2>
+          <h2 style={s.title}>{tool.name}</h2>
           <span style={s.subtitle}>{tool.cli}</span>
         </div>
+        <div style={s.tabs}>
+          <button style={s.tab(tab === 'paths')} onClick={() => setTab('paths')}>
+            Paths
+          </button>
+          <button
+            style={s.tab(tab === 'history')}
+            onClick={() => setTab('history')}
+          >
+            History
+          </button>
+        </div>
 
+        {tab === 'paths' && (
         <div style={s.body}>
           <div style={s.lead}>
             When a credential is activated, each pool file is copied to its
@@ -274,7 +427,9 @@ export function PathsModal({ tool, onClose, onSaved, onError }: Props) {
             + add target
           </button>
         </div>
+        )}
 
+        {tab === 'paths' && (
         <div style={s.footer}>
           <button style={s.reset} onClick={reset} disabled={saving}>
             Reset to defaults
@@ -286,6 +441,53 @@ export function PathsModal({ tool, onClose, onSaved, onError }: Props) {
             {saving ? 'Saving…' : 'Save'}
           </button>
         </div>
+        )}
+
+        {tab === 'history' && (
+          <div style={s.historyBody}>
+            <div style={s.historyLead}>
+              Each credential activation backs up the previous live config
+              here. Restoring copies the backup back over the target — and
+              snapshots the <em>current</em> live state first, so a restore
+              can itself be undone.
+            </div>
+
+            {historyErr && <div style={s.error}>{historyErr}</div>}
+
+            {backups === null && (
+              <div style={s.historyEmpty}>Loading…</div>
+            )}
+
+            {backups && backups.length === 0 && (
+              <div style={s.historyEmpty}>
+                No backups yet. They appear here after the first activation
+                that overwrites a live {tool.cli} file.
+              </div>
+            )}
+
+            {backups &&
+              backups.map((b) => (
+                <div key={b.stamp} style={s.historyRow}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={s.historyWhen}>
+                      {fmtBackupWhen(b.iso, b.stamp)}
+                    </div>
+                    <div style={s.historyStamp}>{b.stamp}</div>
+                    <div style={s.historyFiles} title={b.files.join(', ')}>
+                      {b.files.join(', ')}
+                    </div>
+                  </div>
+                  <button
+                    style={s.restoreBtn}
+                    onClick={() => handleRestore(b)}
+                    disabled={restoring !== null}
+                  >
+                    {restoring === b.stamp ? 'Restoring…' : 'Restore'}
+                  </button>
+                </div>
+              ))}
+          </div>
+        )}
       </div>
     </div>
   );

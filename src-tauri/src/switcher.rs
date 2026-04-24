@@ -8,7 +8,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use chrono::Utc;
+use chrono::{NaiveDateTime, TimeZone, Utc};
+use serde::Serialize;
 
 use crate::error::{AppError, Result};
 use crate::model::{TargetFile, Tool};
@@ -93,6 +94,93 @@ pub fn remove_pool_entry(paths: &AppPaths, tool: &str, alias: &str) -> Result<()
         fs::remove_dir_all(pool_dir)?;
     }
     Ok(())
+}
+
+#[derive(Serialize, Clone)]
+pub struct BackupEntry {
+    /// Raw folder name under `<app_data>/backups/<tool>/`. Pass this to
+    /// [`restore_backup`].
+    pub stamp: String,
+    /// ISO-8601 form of `stamp`, for display (`""` if the stamp is
+    /// unparseable, e.g. a folder written by a future schema).
+    pub iso: String,
+    pub files: Vec<String>,
+}
+
+pub fn list_backups(paths: &AppPaths, tool: &str) -> Result<Vec<BackupEntry>> {
+    let dir = paths.backups_root().join(tool);
+    if !dir.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut entries = Vec::new();
+    for rd in fs::read_dir(&dir)? {
+        let rd = rd?;
+        if !rd.file_type()?.is_dir() {
+            continue;
+        }
+        let stamp = rd.file_name().to_string_lossy().to_string();
+        let iso = NaiveDateTime::parse_from_str(&stamp, "%Y%m%dT%H%M%SZ")
+            .ok()
+            .map(|ndt| Utc.from_utc_datetime(&ndt).to_rfc3339())
+            .unwrap_or_default();
+
+        let mut files = Vec::new();
+        for f in fs::read_dir(rd.path())? {
+            let f = f?;
+            if f.file_type()?.is_file() {
+                files.push(f.file_name().to_string_lossy().to_string());
+            }
+        }
+        files.sort();
+
+        entries.push(BackupEntry { stamp, iso, files });
+    }
+
+    // Newest first (lexicographic order on the timestamp is correct because
+    // the format is fixed-width).
+    entries.sort_by(|a, b| b.stamp.cmp(&a.stamp));
+    Ok(entries)
+}
+
+/// Restore a backup by copying each file in the backup folder over the
+/// current target that has the matching basename. The current live state
+/// is itself backed up first so the restore can be undone.
+pub fn restore_backup(paths: &AppPaths, tool: &Tool, stamp: &str) -> Result<Vec<PathBuf>> {
+    let backup_dir = paths.backups_root().join(&tool.id).join(stamp);
+    if !backup_dir.exists() {
+        return Err(AppError::NotFound(format!(
+            "backup {}/{}",
+            tool.id, stamp
+        )));
+    }
+
+    let pre_stamp = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+    let mut written = Vec::new();
+
+    for t in &tool.targets {
+        let target_path = expand_home(&t.target)?;
+        let basename = match target_path.file_name() {
+            Some(n) => n.to_os_string(),
+            None => continue,
+        };
+        let backup_file = backup_dir.join(&basename);
+        if !backup_file.exists() {
+            continue;
+        }
+        backup_if_present(paths, &tool.id, &target_path, &pre_stamp)?;
+        copy_file(&backup_file, &target_path)?;
+        written.push(target_path);
+    }
+
+    if written.is_empty() {
+        return Err(AppError::NotFound(format!(
+            "backup {}/{} has no files matching the current targets",
+            tool.id, stamp
+        )));
+    }
+
+    Ok(written)
 }
 
 /// Validation used by `update_tool_paths`: reject empty names, duplicates,

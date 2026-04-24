@@ -5,7 +5,7 @@ use tauri::State;
 use crate::error::{AppError, Result};
 use crate::model::{AppState, Credential, Environment, TargetFile};
 use crate::state::Store;
-use crate::switcher;
+use crate::switcher::{self, BackupEntry};
 
 #[derive(Serialize, Clone)]
 pub struct SwitchOutcome {
@@ -282,6 +282,43 @@ pub fn reset_tool_paths(
         Ok(())
     })?;
     Ok(snap)
+}
+
+#[tauri::command]
+pub fn list_backups(
+    store: State<'_, Store>,
+    tool: String,
+) -> Result<Vec<BackupEntry>> {
+    switcher::list_backups(&store.paths, &tool)
+}
+
+#[derive(Serialize, Clone)]
+pub struct RestoreOutcome {
+    pub tool: String,
+    pub stamp: String,
+    pub written: Vec<String>,
+}
+
+#[tauri::command]
+pub fn restore_backup(
+    store: State<'_, Store>,
+    tool: String,
+    stamp: String,
+) -> Result<RestoreOutcome> {
+    let tool_rec = store
+        .snapshot()
+        .find_tool(&tool)
+        .cloned()
+        .ok_or_else(|| AppError::Invalid(format!("unknown tool: {tool}")))?;
+    let written = switcher::restore_backup(&store.paths, &tool_rec, &stamp)?;
+    Ok(RestoreOutcome {
+        tool,
+        stamp,
+        written: written
+            .into_iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect(),
+    })
 }
 
 fn next_cred_id(s: &AppState) -> String {
