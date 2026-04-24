@@ -1,0 +1,900 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>OpenSwitch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  html,body{margin:0;padding:0;background:#fbfaf8;font-family:"Inter","Noto Sans SC",system-ui,sans-serif;color:#1c1a17;min-height:100vh;}
+  *{box-sizing:border-box}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:#e7e3dc;border-radius:999px;border:2px solid transparent;background-clip:content-box}
+  ::-webkit-scrollbar-thumb:hover{background:#d4cfc5;background-clip:content-box;border:2px solid transparent}
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+// Shared data & tokens for OpenSwitch explorations.
+// Everything here is mock data — authorizations are stored as short opaque
+// strings; nothing is ever sent anywhere.
+
+const OS_TOKENS = {
+  // Warm neutral whites / grays — subtle, not clinical blue-white
+  bg:        '#fbfaf8',
+  surface:   '#ffffff',
+  sunken:    '#f5f3ef',
+  line:      '#e7e3dc',
+  lineSoft:  '#eee9e1',
+  ink:       '#1c1a17',
+  inkSoft:   '#55504a',
+  inkMute:   '#8a8279',
+  inkFaint:  '#b7afa4',
+  // Single accent — muted graphite-blue
+  accent:    'oklch(0.52 0.09 250)',
+  accentSoft:'oklch(0.92 0.025 250)',
+  accentInk: 'oklch(0.38 0.08 250)',
+  // State colors (desaturated to match the neutral register)
+  ok:        'oklch(0.58 0.09 155)',
+  okSoft:    'oklch(0.94 0.03 155)',
+  warn:      'oklch(0.70 0.10 70)',
+  warnSoft:  'oklch(0.95 0.04 70)',
+  danger:    'oklch(0.58 0.12 25)',
+  dangerSoft:'oklch(0.95 0.04 25)',
+  // Fonts
+  sans:      '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+  mono:      '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace',
+};
+
+// ─── Tools ─────────────────────────────────────────────────────────────
+// id, name, cli command, minimal monogram glyph
+// tile = brand-adjacent color; `mark` = short brand code shown on the tile
+// (placeholder — drop the real official SVG logo in place of the text span in <OSBrand>).
+// queryable = exposes usage/balance; relay = supports 中转站 endpoints.
+const OS_TOOLS = [
+  { id: 'git',      name: 'Git',             cli: 'git',       glyph: 'G' , mark:'git',   tile:'#F04E36', queryable:false, relay:false },
+  { id: 'wrangler', name: 'Wrangler',        cli: 'wrangler',  glyph: 'W' , mark:'wr',    tile:'#F38020', queryable:false, relay:false },
+  { id: 'codex',    name: 'Codex CLI',       cli: 'codex',     glyph: 'Cx', mark:'codex', tile:'#10A37F', queryable:true,  relay:true  },
+  { id: 'claude',   name: 'Claude Code',     cli: 'claude',    glyph: 'Cl', mark:'cl',    tile:'#CC785C', queryable:true,  relay:true  },
+  { id: 'npm',      name: 'npm / pnpm',      cli: 'npm',       glyph: 'N' , mark:'npm',   tile:'#CB3837', queryable:false, relay:false },
+  { id: 'aws',      name: 'AWS CLI',         cli: 'aws',       glyph: 'A' , mark:'aws',   tile:'#232F3E', queryable:false, relay:false },
+  { id: 'docker',   name: 'Docker Registry', cli: 'docker',    glyph: 'D' , mark:'dk',    tile:'#1D63ED', queryable:false, relay:false },
+];
+
+// Per-credential balances + endpoint (mock). Only populated for queryable tools.
+// Real impl queries each provider's billing/usage API on switch or via Refresh.
+const OS_BALANCE = {
+  c8:  { used: 18.42, limit: 120, unit:'$', label:'this month',  endpoint:'api.openai.com',     endpointTag:'Official' },
+  c9:  { used: 96.10, limit: 100, unit:'$', label:'this month',  endpoint:'api.deepbricks.ai',  endpointTag:'中转' },
+  c10: { used: 62,    limit: 100, unit:'k', label:'5h block',    endpoint:'api.anthropic.com',  endpointTag:'Official', unitSuffix:' tok' },
+  c11: { used: 12,    limit: 100, unit:'k', label:'5h block',    endpoint:'api.ak-relay.cn',    endpointTag:'中转',      unitSuffix:' tok' },
+};
+
+const OS_TOOLS_BY_ID = Object.fromEntries(OS_TOOLS.map(t => [t.id, t]));
+
+// ─── Authorization pool (aliases only, per user spec) ──────────────────
+// Each credential: { id, tool, alias, addedISO }
+const OS_POOL = [
+  // Git
+  { id: 'c1',  tool: 'git',      alias: 'personal'        , addedISO: '2025-11-08' },
+  { id: 'c2',  tool: 'git',      alias: 'work-monorepo'   , addedISO: '2026-01-14' },
+  { id: 'c3',  tool: 'git',      alias: 'open-source'     , addedISO: '2025-06-02' },
+  { id: 'c4',  tool: 'git',      alias: 'client-northwind', addedISO: '2026-03-21' },
+  // Wrangler
+  { id: 'c5',  tool: 'wrangler', alias: 'personal-zone'   , addedISO: '2025-09-11' },
+  { id: 'c6',  tool: 'wrangler', alias: 'acme-prod'       , addedISO: '2026-02-02' },
+  { id: 'c7',  tool: 'wrangler', alias: 'acme-staging'    , addedISO: '2026-02-02' },
+  // Codex
+  { id: 'c8',  tool: 'codex',    alias: 'personal-plus'   , addedISO: '2026-01-30' },
+  { id: 'c9',  tool: 'codex',    alias: 'team-pool'       , addedISO: '2026-02-18' },
+  // Claude Code
+  { id: 'c10', tool: 'claude',   alias: 'personal'        , addedISO: '2025-12-04' },
+  { id: 'c11', tool: 'claude',   alias: 'work-seat'       , addedISO: '2026-03-02' },
+  // npm
+  { id: 'c12', tool: 'npm',      alias: 'personal'        , addedISO: '2024-11-19' },
+  { id: 'c13', tool: 'npm',      alias: 'acme-private'    , addedISO: '2026-01-05' },
+  // AWS
+  { id: 'c14', tool: 'aws',      alias: 'acme-prod-admin' , addedISO: '2025-10-10' },
+  { id: 'c15', tool: 'aws',      alias: 'acme-sandbox'    , addedISO: '2026-03-28' },
+  { id: 'c16', tool: 'aws',      alias: 'personal-lab'    , addedISO: '2025-04-22' },
+  // Docker
+  { id: 'c17', tool: 'docker',   alias: 'ghcr-personal'   , addedISO: '2025-07-11' },
+  { id: 'c18', tool: 'docker',   alias: 'acme-ecr'        , addedISO: '2026-02-12' },
+];
+
+// ─── Environments ──────────────────────────────────────────────────────
+// Each env binds at most one credential per tool (by credential id).
+// Unbound tool = inherit from system default / leave as-is.
+const OS_ENVS = [
+  {
+    id: 'personal',
+    name: 'Personal',
+    hint: 'Side projects, OSS',
+    bindings: {
+      git:      'c1',
+      wrangler: 'c5',
+      codex:    'c8',
+      claude:   'c10',
+      npm:      'c12',
+      aws:      'c16',
+      docker:   'c17',
+    },
+  },
+  {
+    id: 'work',
+    name: 'Work · Acme',
+    hint: 'Acme monorepo & infra',
+    bindings: {
+      git:      'c2',
+      wrangler: 'c6',
+      codex:    'c9',
+      claude:   'c11',
+      npm:      'c13',
+      aws:      'c14',
+      docker:   'c18',
+    },
+  },
+  {
+    id: 'staging',
+    name: 'Work · Staging',
+    hint: 'Acme staging envs only',
+    bindings: {
+      git:      'c2',
+      wrangler: 'c7',
+      aws:      'c15',
+      docker:   'c18',
+      npm:      'c13',
+      claude:   'c11',
+      codex:    'c9',
+    },
+  },
+  {
+    id: 'oss',
+    name: 'Open source',
+    hint: 'Contributing to public repos',
+    bindings: {
+      git:      'c3',
+      npm:      'c12',
+      claude:   'c10',
+      codex:    'c8',
+    },
+  },
+  {
+    id: 'client',
+    name: 'Client · Northwind',
+    hint: 'Short-term client work',
+    bindings: {
+      git:      'c4',
+      claude:   'c11',
+      codex:    'c9',
+    },
+  },
+];
+
+const OS_ENVS_BY_ID = Object.fromEntries(OS_ENVS.map(e => [e.id, e]));
+const OS_POOL_BY_ID = Object.fromEntries(OS_POOL.map(c => [c.id, c]));
+
+// Small helpers
+function osCredsForTool(toolId) {
+  return OS_POOL.filter(c => c.tool === toolId);
+}
+function osFmtDate(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+Object.assign(window, {
+  OS_TOKENS, OS_TOOLS, OS_TOOLS_BY_ID,
+  OS_POOL, OS_POOL_BY_ID, osCredsForTool,
+  OS_ENVS, OS_ENVS_BY_ID, osFmtDate,
+  OS_BALANCE,
+});
+
+// ─── i18n strings for the console ──────────────────────────────────────
+const OS_STRINGS = {
+  en: {
+    searchPlaceholder: 'Search credentials or tools',
+    addCred: 'Add credential',
+    switchEnv: 'Switch environment',
+    newEnv: 'New environment…',
+    manageEnv: 'Manage environments',
+    toolsBound: 'tools bound',
+    credentialsInPool: 'credentials in pool',
+    active: 'Active', unbound: 'Unbound', noCred: 'no credential',
+    added: 'added',
+    pool: 'Pool', addTo: 'add',
+    cliPreview: 'CLI preview — commands run on switch',
+    hide: 'hide', show: 'show',
+    switchingTo: 'Switching to',
+    tweaks: 'Tweaks', density: 'Density',
+    compact: 'Compact', comfortable: 'Comfortable',
+    cliPreviewLabel: 'CLI preview',
+    tweakHint: "Click any chip in a tool's pool to activate it for",
+    tweakHint2: 'Use the workspace switcher (top-left) to flip the whole environment.',
+    balance: 'Balance', usage: 'Usage', refresh: 'Refresh',
+    endpoint: 'Endpoint', official: 'Official', relay: '中转',
+    ofLimit: 'of',
+  },
+  zh: {
+    searchPlaceholder: '搜索凭证或工具',
+    addCred: '添加凭证',
+    switchEnv: '切换环境',
+    newEnv: '新建环境…',
+    manageEnv: '管理环境',
+    toolsBound: '个工具已绑定',
+    credentialsInPool: '个凭证在账号池',
+    active: '已激活', unbound: '未绑定', noCred: '无凭证',
+    added: '添加于',
+    pool: '账号池', addTo: '添加',
+    cliPreview: 'CLI 预览 — 切换时执行的命令',
+    hide: '收起', show: '展开',
+    switchingTo: '切换到',
+    tweaks: '设置', density: '密度',
+    compact: '紧凑', comfortable: '宽松',
+    cliPreviewLabel: 'CLI 预览',
+    tweakHint: '点击工具池中的任意凭证即可将其激活到',
+    tweakHint2: '使用左上角的切换器整体翻转环境。',
+    balance: '余额', usage: '用量', refresh: '刷新',
+    endpoint: '端点', official: '官方', relay: '中转',
+    ofLimit: '/',
+  },
+};
+window.OS_STRINGS = OS_STRINGS;
+
+
+// ──────────
+
+// OpenSwitch — Console v2 (refined)
+// Workspace selector in top-left (Linear/Slack style). Per-tool columns.
+// Primary action = click a pool chip to activate that credential for the
+// current environment. Secondary = switch environment from the dropdown.
+
+const csStyles = {
+  root: {
+    width: '100%', minHeight: '100vh', background: OS_TOKENS.bg, color: OS_TOKENS.ink,
+    fontFamily: OS_TOKENS.sans, fontSize: 13, lineHeight: 1.45,
+    letterSpacing: '-0.005em', display: 'flex', flexDirection: 'column',
+    position: 'relative',
+  },
+
+  // ── Topbar ──────────────────────────────────────────────────────────
+  topbar: {
+    height: 52, flexShrink: 0, borderBottom: `1px solid ${OS_TOKENS.line}`,
+    background: OS_TOKENS.surface, display: 'flex', alignItems: 'center',
+    padding: '0 16px', gap: 14,
+  },
+  wsBtn: (open) => ({
+    display: 'flex', alignItems: 'center', gap: 9, padding: '6px 8px 6px 6px',
+    borderRadius: 7, border: `1px solid ${open ? OS_TOKENS.lineSoft : 'transparent'}`,
+    background: open ? OS_TOKENS.sunken : 'transparent', cursor: 'pointer',
+    fontFamily: 'inherit', color: OS_TOKENS.ink, fontSize: 13,
+    transition: 'background .12s, border-color .12s',
+  }),
+  wsAvatar: {
+    width: 22, height: 22, borderRadius: 5, background: OS_TOKENS.ink,
+    color: OS_TOKENS.bg, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontSize: 11, fontWeight: 600, letterSpacing: '-0.01em',
+  },
+  wsName: { fontWeight: 500, letterSpacing: '-0.005em' },
+  wsChevron: { color: OS_TOKENS.inkMute, fontSize: 10, marginLeft: 2 },
+  wsDivider: { width: 1, height: 20, background: OS_TOKENS.line },
+  brand: {
+    display: 'flex', alignItems: 'center', gap: 8,
+    fontSize: 12.5, color: OS_TOKENS.inkMute, letterSpacing: '-0.005em',
+  },
+  brandLogo: {
+    width: 14, height: 14, borderRadius: 3, background: OS_TOKENS.ink,
+    position: 'relative',
+  },
+  brandLogoInner: { position:'absolute', inset: 3, background: OS_TOKENS.bg, borderRadius: 1 },
+  search: {
+    marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8,
+    padding: '6px 10px', background: OS_TOKENS.sunken, border: `1px solid ${OS_TOKENS.lineSoft}`,
+    borderRadius: 7, fontSize: 12.5, color: OS_TOKENS.inkMute,
+    minWidth: 260, cursor: 'text',
+  },
+  kbd: {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    minWidth: 17, height: 17, padding: '0 4px', borderRadius: 3,
+    background: OS_TOKENS.surface, border: `1px solid ${OS_TOKENS.line}`,
+    fontSize: 10, color: OS_TOKENS.inkSoft, fontFamily: OS_TOKENS.mono,
+    marginLeft: 2,
+  },
+  topBtn: {
+    height: 30, padding: '0 12px', borderRadius: 6, border: `1px solid ${OS_TOKENS.line}`,
+    background: OS_TOKENS.surface, cursor: 'pointer', fontSize: 12.5, fontWeight: 500,
+    color: OS_TOKENS.ink, fontFamily: 'inherit',
+    display: 'flex', alignItems: 'center', gap: 6,
+  },
+
+  // ── Workspace dropdown ──────────────────────────────────────────────
+  wsMenu: {
+    position: 'absolute', top: 52, left: 12, zIndex: 30,
+    minWidth: 280, background: OS_TOKENS.surface,
+    border: `1px solid ${OS_TOKENS.line}`, borderRadius: 10,
+    boxShadow: '0 12px 40px -8px rgba(0,0,0,0.15), 0 2px 6px rgba(0,0,0,0.04)',
+    padding: 6,
+  },
+  wsMenuLabel: {
+    fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase',
+    color: OS_TOKENS.inkMute, padding: '8px 10px 4px',
+  },
+  wsMenuItem: (active) => ({
+    display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px',
+    borderRadius: 6, cursor: 'pointer', fontSize: 13,
+    background: active ? OS_TOKENS.sunken : 'transparent',
+  }),
+  wsMenuSub: { fontSize: 11.5, color: OS_TOKENS.inkMute },
+  wsMenuCheck: { marginLeft: 'auto', color: OS_TOKENS.accent, fontSize: 13 },
+  wsMenuSep: { height: 1, background: OS_TOKENS.line, margin: '6px 0' },
+
+  // ── Subheader / breadcrumb-context ──────────────────────────────────
+  subbar: {
+    flexShrink: 0, padding: '18px 24px 8px', display: 'flex',
+    alignItems: 'flex-end', gap: 16,
+  },
+  envTitle: { fontSize: 22, fontWeight: 600, letterSpacing: '-0.015em', margin: 0 },
+  envHint: { color: OS_TOKENS.inkMute, fontSize: 13, marginTop: 2 },
+  subMeta: {
+    marginLeft: 'auto', fontSize: 11.5, color: OS_TOKENS.inkMute,
+    fontFamily: OS_TOKENS.mono, display: 'flex', gap: 14, alignItems: 'center',
+  },
+
+  // ── Tool columns ────────────────────────────────────────────────────
+  cols: (density) => ({
+    flex: 1, display: 'grid',
+    gridTemplateColumns: `repeat(${OS_TOOLS.length}, minmax(0, 1fr))`,
+    gap: density === 'compact' ? 0 : 12,
+    padding: density === 'compact' ? '8px 16px 24px' : '12px 20px 28px',
+    minHeight: 0,
+  }),
+  col: (density) => ({
+    display: 'flex', flexDirection: 'column',
+    background: OS_TOKENS.surface,
+    border: `1px solid ${OS_TOKENS.line}`,
+    borderRadius: density === 'compact' ? 0 : 10,
+    overflow: 'hidden',
+    minWidth: 0,
+  }),
+  colHead: {
+    padding: '12px 14px 11px',
+    borderBottom: `1px solid ${OS_TOKENS.lineSoft}`,
+    display: 'flex', alignItems: 'center', gap: 9,
+  },
+  colGlyph: {
+    width: 22, height: 22, borderRadius: 5, background: OS_TOKENS.sunken,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontSize: 10.5, fontFamily: OS_TOKENS.mono, color: OS_TOKENS.inkSoft, fontWeight: 600,
+  },
+  brandTile: (bg) => ({
+    width: 22, height: 22, borderRadius: 5, background: bg,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    fontSize: 9.5, fontFamily: OS_TOKENS.mono, color: '#fff', fontWeight: 700,
+    letterSpacing: '-0.02em', flexShrink: 0,
+    boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.15)',
+  }),
+  endpointRow: {
+    marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(0,0,0,0.06)',
+    display: 'flex', alignItems: 'center', gap: 6, fontSize: 10.5,
+    color: OS_TOKENS.inkMute, fontFamily: OS_TOKENS.mono,
+  },
+  endpointTag: (isRelay) => ({
+    fontSize: 9, letterSpacing: '0.08em', textTransform: 'uppercase',
+    padding: '1px 5px', borderRadius: 3, fontWeight: 600,
+    background: isRelay ? '#fde8d7' : '#e6f1ea',
+    color: isRelay ? '#8a4a1a' : '#1e5b3d',
+    fontFamily: OS_TOKENS.sans,
+  }),
+  usageBar: {
+    marginTop: 6, height: 3, borderRadius: 999, background: 'rgba(0,0,0,0.08)',
+    overflow: 'hidden',
+  },
+  usageBarFill: (pct, hot) => ({
+    height: '100%', width: `${Math.min(100, pct)}%`,
+    background: hot ? '#c03a2b' : OS_TOKENS.accent,
+    transition: 'width .2s',
+  }),
+  usageRow: {
+    marginTop: 8, display: 'flex', alignItems: 'baseline', gap: 6,
+    fontSize: 10.5, color: OS_TOKENS.inkMute, fontFamily: OS_TOKENS.mono,
+  },
+  usageStrong: { color: OS_TOKENS.ink, fontWeight: 600 },
+  langSeg: {
+    display: 'inline-flex', background: OS_TOKENS.sunken, borderRadius: 6,
+    padding: 2, border: `1px solid ${OS_TOKENS.lineSoft}`, marginLeft: 8,
+  },
+  langBtn: (active) => ({
+    padding: '3px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 11,
+    background: active ? OS_TOKENS.surface : 'transparent',
+    border: 'none',
+    color: active ? OS_TOKENS.ink : OS_TOKENS.inkMute,
+    fontFamily: 'inherit', fontWeight: active ? 600 : 400,
+  }),
+  colName: { fontSize: 13.5, fontWeight: 600, letterSpacing: '-0.005em', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  colCli: { fontSize: 10.5, color: OS_TOKENS.inkMute, fontFamily: OS_TOKENS.mono },
+  colMenu: {
+    width: 22, height: 22, borderRadius: 5, display: 'flex',
+    alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+    color: OS_TOKENS.inkFaint, fontSize: 14,
+  },
+
+  activeCard: (empty) => ({
+    margin: 10, padding: '12px 12px 13px', borderRadius: 8,
+    background: empty ? OS_TOKENS.sunken : OS_TOKENS.accentSoft,
+    border: `1px solid ${empty ? OS_TOKENS.line : 'transparent'}`,
+    position: 'relative',
+  }),
+  activeLabel: {
+    fontSize: 9.5, letterSpacing: '0.12em', textTransform: 'uppercase',
+    fontWeight: 600,
+    display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6,
+  },
+  activeDot: { width: 6, height: 6, borderRadius: 999, background: OS_TOKENS.accent },
+  activeAlias: (empty) => ({
+    fontSize: 15, fontWeight: 600, letterSpacing: '-0.015em',
+    color: empty ? OS_TOKENS.inkFaint : OS_TOKENS.ink,
+    fontStyle: empty ? 'italic' : 'normal',
+  }),
+  activeMeta: { fontSize: 11, color: OS_TOKENS.inkMute, marginTop: 4, fontFamily: OS_TOKENS.mono },
+
+  poolHead: {
+    padding: '4px 16px 6px', fontSize: 10, letterSpacing: '0.1em',
+    textTransform: 'uppercase', color: OS_TOKENS.inkMute,
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+  },
+  poolList: {
+    padding: '2px 10px 10px', display: 'flex', flexDirection: 'column', gap: 3,
+    flex: 1, overflow: 'auto',
+  },
+  chip: (isActive, hover) => ({
+    display: 'flex', alignItems: 'center', gap: 9, padding: '7px 9px',
+    borderRadius: 6, fontSize: 12.5, cursor: isActive ? 'default' : 'pointer',
+    background: isActive ? 'transparent' : (hover ? OS_TOKENS.sunken : 'transparent'),
+    color: isActive ? OS_TOKENS.inkFaint : OS_TOKENS.ink,
+    transition: 'background .1s',
+    border: '1px solid transparent',
+    userSelect: 'none',
+  }),
+  chipDot: (used) => ({
+    width: 6, height: 6, borderRadius: 999, flexShrink: 0,
+    background: used ? OS_TOKENS.accent : OS_TOKENS.inkFaint,
+    opacity: used ? 1 : 0.5,
+  }),
+  chipMeta: {
+    marginLeft: 'auto', fontSize: 10, color: OS_TOKENS.inkMute,
+    fontFamily: OS_TOKENS.mono, opacity: 0.8,
+  },
+  addCred: {
+    margin: '4px 10px 10px', padding: '7px 10px',
+    border: `1px dashed ${OS_TOKENS.line}`, borderRadius: 6,
+    fontSize: 11.5, color: OS_TOKENS.inkMute, cursor: 'pointer',
+    background: 'transparent', fontFamily: 'inherit', textAlign: 'left',
+  },
+
+  // ── CLI preview drawer ──────────────────────────────────────────────
+  drawer: (open) => ({
+    flexShrink: 0, borderTop: `1px solid ${OS_TOKENS.line}`,
+    background: '#111111', color: '#e8e4dc',
+    maxHeight: open ? 220 : 38, transition: 'max-height .2s cubic-bezier(.2,.7,.3,1)',
+    overflow: 'hidden', fontFamily: OS_TOKENS.mono, fontSize: 12,
+  }),
+  drawerHead: {
+    height: 38, padding: '0 16px', display: 'flex', alignItems: 'center',
+    gap: 10, cursor: 'pointer', borderBottom: `1px solid rgba(255,255,255,0.06)`,
+  },
+  drawerLabel: { color: '#a8a198', fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', fontFamily: OS_TOKENS.sans, fontWeight: 500 },
+  drawerLines: { padding: '10px 16px', display: 'flex', flexDirection: 'column', gap: 4 },
+  drawerLine: { display: 'flex', gap: 10, alignItems: 'baseline' },
+  drawerPrompt: { color: '#5b8a72', flexShrink: 0 },
+  drawerComment: { color: '#6b655c' },
+
+  // ── Tweaks panel ────────────────────────────────────────────────────
+  tweaks: {
+    position: 'fixed', bottom: 16, right: 16, zIndex: 40,
+    width: 280, background: OS_TOKENS.surface,
+    border: `1px solid ${OS_TOKENS.line}`, borderRadius: 10,
+    boxShadow: '0 12px 40px -8px rgba(0,0,0,0.15)',
+    fontSize: 12.5,
+  },
+  tweakHead: {
+    padding: '10px 14px', borderBottom: `1px solid ${OS_TOKENS.lineSoft}`,
+    display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600,
+  },
+  tweakBody: { padding: '10px 14px 14px', display: 'flex', flexDirection: 'column', gap: 10 },
+  tweakRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  tweakLabel: { color: OS_TOKENS.inkSoft },
+  seg: {
+    display: 'inline-flex', background: OS_TOKENS.sunken, borderRadius: 6,
+    padding: 2, border: `1px solid ${OS_TOKENS.lineSoft}`,
+  },
+  segBtn: (active) => ({
+    padding: '4px 10px', borderRadius: 4, cursor: 'pointer', fontSize: 11.5,
+    background: active ? OS_TOKENS.surface : 'transparent',
+    border: `1px solid ${active ? OS_TOKENS.line : 'transparent'}`,
+    color: active ? OS_TOKENS.ink : OS_TOKENS.inkMute,
+    fontFamily: 'inherit', fontWeight: active ? 500 : 400,
+  }),
+  toggle: (on) => ({
+    width: 28, height: 16, borderRadius: 999, padding: 2, cursor: 'pointer',
+    background: on ? OS_TOKENS.accent : OS_TOKENS.inkFaint,
+    transition: 'background .15s',
+    position: 'relative', border: 'none',
+  }),
+  toggleKnob: (on) => ({
+    width: 12, height: 12, borderRadius: 999, background: '#fff',
+    transform: `translateX(${on ? 12 : 0}px)`,
+    transition: 'transform .15s',
+    boxShadow: '0 1px 2px rgba(0,0,0,0.2)',
+  }),
+
+  toast: {
+    position: 'fixed', top: 10, left: '50%', transform: 'translateX(-50%)',
+    background: OS_TOKENS.ink, color: OS_TOKENS.bg, fontSize: 12.5,
+    padding: '8px 14px', borderRadius: 999, boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+    display: 'flex', alignItems: 'center', gap: 10, zIndex: 50,
+    fontFamily: OS_TOKENS.sans,
+  },
+  toastDot: { width: 6, height: 6, borderRadius: 999, background: OS_TOKENS.ok },
+};
+
+// Tweakable defaults (persisted via edit-mode protocol)
+const TWEAKS_DEFAULT = /*EDITMODE-BEGIN*/{
+  "density": "comfortable",
+  "cliPreviewOpen": false,
+  "accent": "default",
+  "lang": "en"
+}/*EDITMODE-END*/;
+
+function OSBrandTile({ tool }) {
+  if (!tool) return null;
+  return <span style={csStyles.brandTile(tool.tile)} aria-label={tool.name}>{tool.glyph}</span>;
+}
+
+function fmtBalance(b) {
+  if (!b) return null;
+  const pct = Math.round((b.used / b.limit) * 100);
+  const suffix = b.unitSuffix || '';
+  const left = b.unit === '$' ? `$${b.used.toFixed(2)}` : `${b.used}${b.unit}${suffix}`;
+  const right = b.unit === '$' ? `$${b.limit}` : `${b.limit}${b.unit}${suffix}`;
+  return { pct, left, right, label: b.label, hot: pct > 75 };
+}
+
+function ConsoleV2() {
+  const [activeEnv, setActiveEnv] = React.useState('personal');
+  const [wsOpen, setWsOpen] = React.useState(false);
+  const [bindings, setBindings] = React.useState(() =>
+    Object.fromEntries(OS_ENVS.map(e => [e.id, { ...e.bindings }]))
+  );
+  const [toast, setToast] = React.useState(null);
+  const [hoverChip, setHoverChip] = React.useState(null);
+
+  // Tweaks
+  const [density, setDensity] = React.useState(TWEAKS_DEFAULT.density);
+  const [cliOpen, setCliOpen] = React.useState(TWEAKS_DEFAULT.cliPreviewOpen);
+  const [tweaksVisible, setTweaksVisible] = React.useState(false);
+  const [lang, setLang] = React.useState(TWEAKS_DEFAULT.lang || 'en');
+  const T = OS_STRINGS[lang];
+
+  const showToast = (m) => {
+    setToast(m);
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => setToast(null), 2200);
+  };
+
+  // ── Edit-mode protocol ────────────────────────────────────────────
+  React.useEffect(() => {
+    const onMsg = (ev) => {
+      const d = ev.data;
+      if (!d || typeof d !== 'object') return;
+      if (d.type === '__activate_edit_mode') setTweaksVisible(true);
+      if (d.type === '__deactivate_edit_mode') setTweaksVisible(false);
+    };
+    window.addEventListener('message', onMsg);
+    window.parent.postMessage({ type: '__edit_mode_available' }, '*');
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+  const persist = (edits) => {
+    try { window.parent.postMessage({ type: '__edit_mode_set_keys', edits }, '*'); } catch(e) {}
+  };
+
+  const env = OS_ENVS_BY_ID[activeEnv];
+  const envBindings = bindings[activeEnv];
+  const boundCount = Object.values(envBindings).filter(Boolean).length;
+
+  const activateCred = (toolId, credId) => {
+    setBindings(prev => ({
+      ...prev,
+      [activeEnv]: { ...prev[activeEnv], [toolId]: credId },
+    }));
+    const cred = OS_POOL_BY_ID[credId];
+    const tool = OS_TOOLS_BY_ID[toolId];
+    showToast(`${tool.cli} → ${cred.alias}`);
+  };
+
+  const switchEnv = (envId) => {
+    setActiveEnv(envId);
+    setWsOpen(false);
+    const e = OS_ENVS_BY_ID[envId];
+    const n = Object.values(bindings[envId]).filter(Boolean).length;
+    showToast(`Switched to ${e.name} · ${n} tools`);
+  };
+
+  // CLI preview lines — stylized
+  const cliLines = OS_TOOLS.map(t => {
+    const credId = envBindings[t.id];
+    const cred = credId ? OS_POOL_BY_ID[credId] : null;
+    if (!cred) return { prompt: '#', text: `${t.cli} — unbound`, comment: true };
+    // Per-tool made-up activate commands
+    const cmds = {
+      git:      `git config --global credential.helper "${cred.alias}"`,
+      wrangler: `wrangler whoami --profile ${cred.alias}`,
+      codex:    `codex auth use ${cred.alias}`,
+      claude:   `claude auth use ${cred.alias}`,
+      npm:      `npm config set _authToken $(os-keyring get ${cred.alias})`,
+      aws:      `export AWS_PROFILE=${cred.alias}`,
+      docker:   `docker login --username ${cred.alias}`,
+    };
+    return { prompt: '$', text: cmds[t.id] || `${t.cli} use ${cred.alias}` };
+  });
+
+  return (
+    <div style={csStyles.root} onClick={() => setWsOpen(false)}>
+      {/* ── Topbar ── */}
+      <div style={csStyles.topbar} onClick={(e) => e.stopPropagation()}>
+        <button style={csStyles.wsBtn(wsOpen)} onClick={() => setWsOpen(v => !v)}>
+          <span style={csStyles.wsAvatar}>{env.name[0]}</span>
+          <span style={csStyles.wsName}>{env.name}</span>
+          <span style={csStyles.wsChevron}>▾</span>
+        </button>
+        <span style={csStyles.wsDivider}/>
+        <div style={csStyles.brand}>
+          <span style={csStyles.brandLogo}><span style={csStyles.brandLogoInner}/></span>
+          OpenSwitch
+        </div>
+
+        <div style={csStyles.search}>
+          <span style={{opacity: 0.6}}>⌕</span>
+          <span>{T.searchPlaceholder}</span>
+          <span style={{marginLeft: 'auto', display: 'flex', alignItems: 'center'}}>
+            <span style={csStyles.kbd}>⌘</span>
+            <span style={csStyles.kbd}>K</span>
+          </span>
+        </div>
+        <div style={csStyles.langSeg}>
+          <button style={csStyles.langBtn(lang === 'en')} onClick={() => { setLang('en'); persist({lang:'en'}); }}>EN</button>
+          <button style={csStyles.langBtn(lang === 'zh')} onClick={() => { setLang('zh'); persist({lang:'zh'}); }}>中文</button>
+        </div>
+        <button style={csStyles.topBtn}>
+          <span style={{fontSize: 14, lineHeight: 1}}>+</span>
+          {T.addCred}
+        </button>
+      </div>
+
+      {/* ── Workspace dropdown ── */}
+      {wsOpen && (
+        <div style={csStyles.wsMenu} onClick={(e) => e.stopPropagation()}>
+          <div style={csStyles.wsMenuLabel}>{T.switchEnv}</div>
+          {OS_ENVS.map(e => {
+            const isActive = e.id === activeEnv;
+            const n = Object.values(bindings[e.id]).filter(Boolean).length;
+            return (
+              <div key={e.id} style={csStyles.wsMenuItem(isActive)} onClick={() => switchEnv(e.id)}>
+                <span style={{...csStyles.wsAvatar, width: 20, height: 20, fontSize: 10,
+                  background: isActive ? OS_TOKENS.accent : OS_TOKENS.sunken,
+                  color: isActive ? '#fff' : OS_TOKENS.inkSoft,
+                  border: isActive ? 'none' : `1px solid ${OS_TOKENS.line}`}}>
+                  {e.name[0]}
+                </span>
+                <div style={{flex:1, minWidth:0}}>
+                  <div style={{fontWeight: 500}}>{e.name}</div>
+                  <div style={csStyles.wsMenuSub}>{e.hint} · {n} tools</div>
+                </div>
+                {isActive && <span style={csStyles.wsMenuCheck}>✓</span>}
+              </div>
+            );
+          })}
+          <div style={csStyles.wsMenuSep}/>
+          <div style={{...csStyles.wsMenuItem(false), color: OS_TOKENS.inkSoft}}>
+            <span style={{...csStyles.wsAvatar, width: 20, height: 20, background: OS_TOKENS.sunken, color: OS_TOKENS.inkSoft, fontSize: 12}}>+</span>
+            <span>{T.newEnv}</span>
+          </div>
+          <div style={{...csStyles.wsMenuItem(false), color: OS_TOKENS.inkSoft}}>
+            <span style={{...csStyles.wsAvatar, width: 20, height: 20, background: OS_TOKENS.sunken, color: OS_TOKENS.inkSoft, fontSize: 11}}>⚙</span>
+            <span>{T.manageEnv}</span>
+          </div>
+        </div>
+      )}
+
+      {/* ── Sub header ── */}
+      <div style={csStyles.subbar}>
+        <div>
+          <h1 style={csStyles.envTitle}>{env.name}</h1>
+          <div style={csStyles.envHint}>{env.hint}</div>
+        </div>
+        <div style={csStyles.subMeta}>
+          <span>{boundCount}/{OS_TOOLS.length} {T.toolsBound}</span>
+          <span style={{opacity:0.4}}>·</span>
+          <span>{OS_POOL.length} {T.credentialsInPool}</span>
+        </div>
+      </div>
+
+      {/* ── Tool columns ── */}
+      <div style={csStyles.cols(density)}>
+        {OS_TOOLS.map(t => {
+          const creds = osCredsForTool(t.id);
+          const activeCredId = envBindings[t.id];
+          const activeCred = activeCredId ? OS_POOL_BY_ID[activeCredId] : null;
+          return (
+            <div key={t.id} style={csStyles.col(density)}>
+              {/* Header */}
+              <div style={csStyles.colHead}>
+                <OSBrandTile tool={t}/>
+                <span style={csStyles.colName}>{t.name}</span>
+                <span style={csStyles.colCli}>{t.cli}</span>
+                <span style={csStyles.colMenu}>⋯</span>
+              </div>
+
+              {/* Active card */}
+              <div style={csStyles.activeCard(!activeCred)}>
+                <div style={{...csStyles.activeLabel, color: activeCred ? OS_TOKENS.accentInk : OS_TOKENS.inkMute}}>
+                  {activeCred && <span style={csStyles.activeDot}/>}
+                  {activeCred ? T.active : T.unbound}
+                </div>
+                <div style={csStyles.activeAlias(!activeCred)}>
+                  {activeCred ? activeCred.alias : T.noCred}
+                </div>
+                {activeCred && (
+                  <div style={csStyles.activeMeta}>
+                    {T.added} {osFmtDate(activeCred.addedISO)}
+                  </div>
+                )}
+                {activeCred && t.queryable && (() => {
+                  const b = OS_BALANCE[activeCred.id];
+                  if (!b) return null;
+                  const f = fmtBalance(b);
+                  return (
+                    <>
+                      <div style={csStyles.usageRow}>
+                        <span style={csStyles.usageStrong}>{f.left}</span>
+                        <span style={{opacity: 0.5}}>{T.ofLimit}</span>
+                        <span>{f.right}</span>
+                        <span style={{marginLeft: 'auto', opacity: 0.6}}>{f.label}</span>
+                      </div>
+                      <div style={csStyles.usageBar}>
+                        <div style={csStyles.usageBarFill(f.pct, f.hot)}/>
+                      </div>
+                    </>
+                  );
+                })()}
+                {activeCred && t.relay && OS_BALANCE[activeCred.id] && (
+                  <div style={csStyles.endpointRow}>
+                    <span style={csStyles.endpointTag(OS_BALANCE[activeCred.id].endpointTag === '中转')}>
+                      {OS_BALANCE[activeCred.id].endpointTag === '中转' ? T.relay : T.official}
+                    </span>
+                    <span style={{overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                      {OS_BALANCE[activeCred.id].endpoint}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Pool list */}
+              <div style={csStyles.poolHead}>
+                <span>{T.pool}</span>
+                <span style={{fontFamily: OS_TOKENS.mono, letterSpacing: 0, textTransform: 'none', fontSize: 10.5}}>
+                  {creds.length}
+                </span>
+              </div>
+              <div style={csStyles.poolList}>
+                {creds.map(c => {
+                  const isActive = c.id === activeCredId;
+                  const hoverKey = `${t.id}:${c.id}`;
+                  const usedInEnvs = OS_ENVS.filter(e => bindings[e.id][t.id] === c.id).length;
+                  return (
+                    <div
+                      key={c.id}
+                      style={csStyles.chip(isActive, hoverChip === hoverKey)}
+                      onMouseEnter={() => setHoverChip(hoverKey)}
+                      onMouseLeave={() => setHoverChip(null)}
+                      onClick={() => !isActive && activateCred(t.id, c.id)}
+                      title={isActive ? 'Currently active' : `Activate ${c.alias} for ${env.name}`}
+                    >
+                      <span style={csStyles.chipDot(usedInEnvs > 0)}/>
+                      <span style={{flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>
+                        {c.alias}
+                      </span>
+                      {isActive && <span style={{fontSize: 10, color: OS_TOKENS.accent, fontFamily: OS_TOKENS.mono}}>active</span>}
+                      {!isActive && usedInEnvs > 0 && (
+                        <span style={csStyles.chipMeta}>in {usedInEnvs}</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <button style={csStyles.addCred}>+ {T.addTo} {t.name}</button>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── CLI preview drawer ── */}
+      <div style={csStyles.drawer(cliOpen)}>
+        <div style={csStyles.drawerHead} onClick={() => { setCliOpen(v => !v); persist({cliPreviewOpen: !cliOpen}); }}>
+          <span style={{color: '#5b8a72'}}>›</span>
+          <span style={csStyles.drawerLabel}>{T.cliPreview}</span>
+          <span style={{marginLeft: 'auto', color: '#6b655c', fontSize: 11, fontFamily: OS_TOKENS.sans}}>
+            {cliOpen ? T.hide : T.show} ⌘J
+          </span>
+        </div>
+        {cliOpen && (
+          <div style={csStyles.drawerLines}>
+            <div style={csStyles.drawerLine}>
+              <span style={csStyles.drawerComment}># {T.switchingTo} {env.name}</span>
+            </div>
+            {cliLines.map((l, i) => (
+              <div key={i} style={csStyles.drawerLine}>
+                <span style={l.comment ? csStyles.drawerComment : csStyles.drawerPrompt}>{l.prompt}</span>
+                <span style={l.comment ? csStyles.drawerComment : {}}>{l.text}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Tweaks panel ── */}
+      {tweaksVisible && (
+        <div style={csStyles.tweaks}>
+          <div style={csStyles.tweakHead}>
+            <span style={{fontSize: 13}}>{T.tweaks}</span>
+            <span style={{marginLeft: 'auto', fontSize: 10.5, color: OS_TOKENS.inkMute, fontFamily: OS_TOKENS.mono}}>OpenSwitch</span>
+          </div>
+          <div style={csStyles.tweakBody}>
+            <div style={csStyles.tweakRow}>
+              <span style={csStyles.tweakLabel}>{T.density}</span>
+              <div style={csStyles.seg}>
+                {['compact', 'comfortable'].map(d => (
+                  <button key={d} style={csStyles.segBtn(density === d)} onClick={() => { setDensity(d); persist({density: d}); }}>
+                    {d === 'compact' ? T.compact : T.comfortable}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={csStyles.tweakRow}>
+              <span style={csStyles.tweakLabel}>{T.cliPreviewLabel}</span>
+              <button style={csStyles.toggle(cliOpen)} onClick={() => { setCliOpen(v => !v); persist({cliPreviewOpen: !cliOpen}); }}>
+                <span style={csStyles.toggleKnob(cliOpen)}/>
+              </button>
+            </div>
+            <div style={{fontSize: 11, color: OS_TOKENS.inkMute, lineHeight: 1.5, marginTop: 4, borderTop: `1px solid ${OS_TOKENS.lineSoft}`, paddingTop: 8}}>
+              {T.tweakHint} <b>{env.name}</b>. {T.tweakHint2}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Toast ── */}
+      {toast && (
+        <div style={csStyles.toast}>
+          <span style={csStyles.toastDot}/>
+          {toast}
+        </div>
+      )}
+    </div>
+  );
+}
+
+window.ConsoleV2 = ConsoleV2;
+
+
+const __osRoot = ReactDOM.createRoot(document.getElementById('root'));
+__osRoot.render(<ConsoleV2/>);
+</script>
+</body>
+</html>

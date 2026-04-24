@@ -1,0 +1,636 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>OpenSwitch — Dialogs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600&display=swap" rel="stylesheet"/>
+<style>
+  html,body{margin:0;padding:0;background:#efece6;font-family:"Inter","Noto Sans SC",system-ui,sans-serif;color:#1c1a17;min-height:100vh;}
+  *{box-sizing:border-box}
+  button{font-family:inherit}
+  input,textarea,select{font-family:inherit;font-size:inherit;color:inherit}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:#e7e3dc;border-radius:999px;border:2px solid transparent;background-clip:content-box}
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const T = {
+  bg:'#fbfaf8', surface:'#ffffff', sunken:'#f5f3ef',
+  line:'#e7e3dc', lineSoft:'#eee9e1',
+  ink:'#1c1a17', inkSoft:'#55504a', inkMute:'#8a8279', inkFaint:'#b7afa4',
+  accent:'oklch(0.52 0.09 250)', accentSoft:'oklch(0.92 0.025 250)', accentInk:'oklch(0.38 0.08 250)',
+  ok:'oklch(0.58 0.09 155)', okSoft:'oklch(0.94 0.03 155)',
+  danger:'oklch(0.58 0.12 25)',
+  sans:'"Inter","Noto Sans SC", system-ui, sans-serif',
+  mono:'"JetBrains Mono", ui-monospace, Menlo, monospace',
+};
+
+// Tools — brand-adjacent placeholder tiles (NOT official logos — real SVG
+// marks should be dropped into <BrandTile> later).
+const TOOLS = [
+  { id:'git',      name:'Git',              cli:'git',       kind:'token', glyph:'git',   tile:'#F04E36', relay:false },
+  { id:'wrangler', name:'Wrangler',         cli:'wrangler',  kind:'oauth', glyph:'wr',    tile:'#F38020', relay:false },
+  { id:'codex',    name:'Codex CLI',        cli:'codex',     kind:'oauth', glyph:'codex', tile:'#10A37F', relay:true  },
+  { id:'claude',   name:'Claude Code',      cli:'claude',    kind:'oauth', glyph:'cl',    tile:'#CC785C', relay:true  },
+  { id:'npm',      name:'npm / pnpm',       cli:'npm',       kind:'token', glyph:'npm',   tile:'#CB3837', relay:false },
+  { id:'aws',      name:'AWS CLI',          cli:'aws',       kind:'file',  glyph:'aws',   tile:'#232F3E', relay:false },
+  { id:'docker',   name:'Docker Registry',  cli:'docker',    kind:'token', glyph:'dk',    tile:'#1D63ED', relay:false },
+];
+const TOOLS_BY_ID = Object.fromEntries(TOOLS.map(t => [t.id, t]));
+
+const BrandTile = ({ tool, size=28, radius=7 }) => {
+  const fontSize = Math.round(size * 0.38);
+  return (
+    <div title={`${tool.name} — drop official SVG logo here`} style={{
+      width:size, height:size, borderRadius:radius, flexShrink:0,
+      background: tool.tile, color:'#fff',
+      display:'flex', alignItems:'center', justifyContent:'center',
+      fontFamily: T.mono, fontSize, fontWeight:700, letterSpacing:'-0.02em',
+      boxShadow:'inset 0 -1px 0 rgba(0,0,0,0.18), inset 0 1px 0 rgba(255,255,255,0.12)',
+    }}>
+      <span style={{mixBlendMode:'screen', opacity:0.95}}>{tool.glyph}</span>
+    </div>
+  );
+};
+
+const EXISTING_ENVS = [
+  { id:'personal', name:'Personal',           hint:'Side projects, OSS',       count:7 },
+  { id:'work',     name:'Work · Acme',        hint:'Acme monorepo & infra',    count:7 },
+  { id:'staging',  name:'Work · Staging',     hint:'Acme staging envs only',   count:7 },
+  { id:'oss',      name:'Open source',        hint:'Contributing to public',   count:4 },
+  { id:'client',   name:'Client · Northwind', hint:'Short-term client work',   count:3 },
+];
+
+const RELAY_PRESETS = {
+  codex: [
+    { id:'openai',     label:'api.openai.com',         tag:'Official' },
+    { id:'deepbricks', label:'api.deepbricks.ai',      tag:'Relay · 中转' },
+    { id:'any-router', label:'router.any-proxy.dev',   tag:'Relay · 中转' },
+  ],
+  claude: [
+    { id:'anthropic',  label:'api.anthropic.com',      tag:'Official' },
+    { id:'ak-relay',   label:'api.ak-relay.cn',        tag:'Relay · 中转' },
+    { id:'oneapi',     label:'oneapi.local:3000',      tag:'Relay · 中转' },
+  ],
+};
+
+// ── Primitives ──
+const FieldLabel = ({ children, hint, htmlFor, required }) => (
+  <label htmlFor={htmlFor} style={{
+    display:'flex', alignItems:'baseline', gap:8, fontSize:12.5, fontWeight:500,
+    color:T.ink, marginBottom:6, letterSpacing:'-0.005em',
+  }}>
+    <span>{children}{required && <span style={{color:T.danger, marginLeft:2}}>*</span>}</span>
+    {hint && <span style={{fontSize:11.5, fontWeight:400, color:T.inkMute}}>{hint}</span>}
+  </label>
+);
+
+const Input = React.forwardRef(({ leading, trailing, mono, invalid, style, ...rest }, ref) => (
+  <div style={{
+    display:'flex', alignItems:'center', gap:8,
+    height:34, padding:'0 10px', borderRadius:7,
+    background:T.surface,
+    border:`1px solid ${invalid ? T.danger : T.line}`,
+    ...style,
+  }}>
+    {leading && <span style={{color:T.inkMute, fontSize:12.5, fontFamily: mono ? T.mono : 'inherit'}}>{leading}</span>}
+    <input ref={ref} {...rest} style={{
+      flex:1, minWidth:0, height:'100%', border:'none', outline:'none',
+      background:'transparent', fontSize:13,
+      fontFamily: mono ? T.mono : 'inherit',
+      letterSpacing: mono ? 0 : '-0.005em',
+    }}/>
+    {trailing}
+  </div>
+));
+
+const Button = ({ variant='default', size='md', children, style, ...rest }) => {
+  const base = {
+    display:'inline-flex', alignItems:'center', justifyContent:'center', gap:6,
+    borderRadius:7, fontFamily:'inherit', fontWeight:500,
+    cursor:'pointer', letterSpacing:'-0.005em', whiteSpace:'nowrap',
+  };
+  const sizes = {
+    sm: { height:28, padding:'0 10px', fontSize:12 },
+    md: { height:34, padding:'0 14px', fontSize:13 },
+  };
+  const variants = {
+    default: { background:T.ink, color:T.bg, border:`1px solid ${T.ink}` },
+    outline: { background:T.surface, color:T.ink, border:`1px solid ${T.line}` },
+    ghost:   { background:'transparent', color:T.inkSoft, border:'1px solid transparent' },
+  };
+  return <button {...rest} style={{...base, ...sizes[size], ...variants[variant], ...style}}>{children}</button>;
+};
+
+const Kbd = ({ children }) => (
+  <span style={{
+    display:'inline-flex', alignItems:'center', justifyContent:'center',
+    minWidth:17, height:17, padding:'0 4px', borderRadius:3,
+    background:T.surface, border:`1px solid ${T.line}`,
+    fontSize:10, color:T.inkSoft, fontFamily:T.mono,
+  }}>{children}</span>
+);
+
+const Separator = ({ style }) => <div style={{height:1, background:T.line, ...style}}/>;
+
+const RadioCards = ({ value, onChange, options }) => (
+  <div style={{display:'grid', gridTemplateColumns:`repeat(${options.length}, 1fr)`, gap:8}}>
+    {options.map(o => {
+      const active = o.id === value;
+      return (
+        <button key={o.id} onClick={() => onChange(o.id)} style={{
+          textAlign:'left', padding:'10px 11px', borderRadius:8,
+          background: active ? T.accentSoft : T.surface,
+          border:`1px solid ${active ? 'oklch(0.78 0.07 250)' : T.line}`,
+          boxShadow: active ? '0 0 0 3px oklch(0.95 0.02 250)' : 'none',
+          cursor:'pointer', display:'flex', flexDirection:'column', gap:3,
+          fontFamily:'inherit', color:T.ink,
+        }}>
+          <span style={{fontSize:12.5, fontWeight:600, letterSpacing:'-0.005em', color: active ? T.accentInk : T.ink}}>{o.label}</span>
+          <span style={{fontSize:11.5, color:T.inkMute, lineHeight:1.4}}>{o.hint}</span>
+        </button>
+      );
+    })}
+  </div>
+);
+
+const Check = ({ checked, onChange }) => (
+  <button onClick={() => onChange(!checked)} style={{
+    width:16, height:16, borderRadius:4, cursor:'pointer',
+    background: checked ? T.accent : T.surface,
+    border:`1px solid ${checked ? T.accent : T.line}`,
+    display:'flex', alignItems:'center', justifyContent:'center',
+    padding:0, flexShrink:0,
+  }}>
+    {checked && (
+      <svg width="10" height="10" viewBox="0 0 10 10">
+        <path d="M1.5 5.3 L4 7.6 L8.5 2.6" stroke="#fff" strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    )}
+  </button>
+);
+
+const Dialog = ({ children, width=520 }) => (
+  <div style={{
+    width, background:T.surface, borderRadius:12,
+    border:`1px solid ${T.line}`,
+    boxShadow:'0 24px 60px -12px rgba(24,20,14,0.28), 0 4px 12px rgba(24,20,14,0.06)',
+    display:'flex', flexDirection:'column', overflow:'hidden',
+    maxHeight:'calc(100vh - 48px)',
+  }}>{children}</div>
+);
+
+const DialogHeader = ({ title, subtitle, onClose }) => (
+  <div style={{
+    padding:'16px 18px 14px', display:'flex', alignItems:'flex-start', gap:12,
+    borderBottom:`1px solid ${T.lineSoft}`,
+  }}>
+    <div style={{flex:1, minWidth:0}}>
+      <h2 style={{margin:0, fontSize:16, fontWeight:600, letterSpacing:'-0.015em'}}>{title}</h2>
+      {subtitle && <p style={{margin:'3px 0 0', fontSize:12.5, color:T.inkMute, lineHeight:1.5}}>{subtitle}</p>}
+    </div>
+    <button onClick={onClose} style={{
+      width:26, height:26, borderRadius:6, border:'none', background:'transparent',
+      color:T.inkMute, cursor:'pointer', fontSize:16, lineHeight:1,
+      display:'flex', alignItems:'center', justifyContent:'center',
+    }}>×</button>
+  </div>
+);
+
+const DialogBody = ({ children, style }) => (
+  <div style={{padding:'16px 18px 18px', overflow:'auto', ...style}}>{children}</div>
+);
+
+const DialogFooter = ({ children }) => (
+  <div style={{
+    padding:'12px 16px', display:'flex', alignItems:'center', gap:10,
+    borderTop:`1px solid ${T.lineSoft}`, background:T.bg,
+  }}>{children}</div>
+);
+
+// ── Add Environment ──
+const ENV_COLORS = [
+  { id:'ink',    v: T.ink },
+  { id:'blue',   v: 'oklch(0.52 0.09 250)' },
+  { id:'green',  v: 'oklch(0.55 0.09 155)' },
+  { id:'amber',  v: 'oklch(0.68 0.12 70)'  },
+  { id:'red',    v: 'oklch(0.58 0.12 25)'  },
+  { id:'violet', v: 'oklch(0.52 0.11 300)' },
+];
+
+function AddEnvironmentDialog({ onClose }) {
+  const [name, setName] = React.useState('');
+  const [hint, setHint] = React.useState('');
+  const [color, setColor] = React.useState('blue');
+  const [mode, setMode] = React.useState('inherit');
+  const [cloneFrom, setCloneFrom] = React.useState('personal');
+  const [setActive, setSetActive] = React.useState(true);
+
+  const slug = (name || 'untitled').toLowerCase()
+    .replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,24) || 'untitled';
+
+  return (
+    <Dialog width={560}>
+      <DialogHeader
+        title="New environment"
+        subtitle="An environment is a named bundle of credential bindings you can flip to as a unit."
+        onClose={onClose}
+      />
+      <DialogBody>
+        <div style={{display:'flex', gap:12, alignItems:'flex-start'}}>
+          <div style={{flexShrink:0}}>
+            <FieldLabel>Icon</FieldLabel>
+            <div style={{
+              width:44, height:44, borderRadius:8,
+              background: ENV_COLORS.find(c=>c.id===color).v,
+              color:'#fff', display:'flex', alignItems:'center', justifyContent:'center',
+              fontWeight:600, fontSize:18, letterSpacing:'-0.01em',
+            }}>{(name[0] || 'E').toUpperCase()}</div>
+          </div>
+          <div style={{flex:1, minWidth:0}}>
+            <FieldLabel htmlFor="env-name" required>Name</FieldLabel>
+            <Input id="env-name" value={name} placeholder="Work · Acme"
+              onChange={e => setName(e.target.value)} autoFocus/>
+            <div style={{marginTop:6, fontSize:11, color:T.inkMute, fontFamily:T.mono}}>
+              id: <span style={{color:T.inkSoft}}>{slug}</span>
+            </div>
+          </div>
+        </div>
+
+        <div style={{marginTop:14}}>
+          <FieldLabel hint="Shown in the switcher and header">Color</FieldLabel>
+          <div style={{display:'flex', gap:8}}>
+            {ENV_COLORS.map(c => (
+              <button key={c.id} onClick={() => setColor(c.id)} style={{
+                width:26, height:26, borderRadius:7, border:'none',
+                background: c.v, cursor:'pointer', padding:0,
+                boxShadow: c.id === color ? `0 0 0 2px ${T.surface}, 0 0 0 4px ${T.ink}` : 'none',
+              }}/>
+            ))}
+          </div>
+        </div>
+
+        <div style={{marginTop:14}}>
+          <FieldLabel htmlFor="env-hint" hint="Optional · one short line">Description</FieldLabel>
+          <Input id="env-hint" value={hint} placeholder="Acme monorepo & infra"
+            onChange={e => setHint(e.target.value)}/>
+        </div>
+
+        <Separator style={{margin:'18px 0 14px'}}/>
+
+        <FieldLabel hint="You can change any binding later">Starting bindings</FieldLabel>
+        <RadioCards value={mode} onChange={setMode} options={[
+          { id:'inherit', label:'Inherit',    hint:'Keep current active creds per tool' },
+          { id:'blank',   label:'Blank',      hint:'All tools unbound' },
+          { id:'clone',   label:'Copy from…', hint:'Duplicate another environment' },
+        ]}/>
+
+        {mode === 'clone' && (
+          <div style={{marginTop:10, padding:'10px 12px', borderRadius:8, background:T.sunken, border:`1px solid ${T.lineSoft}`}}>
+            <FieldLabel htmlFor="clone-from" hint="All 7 tool bindings are copied">Source environment</FieldLabel>
+            <div style={{display:'flex', flexDirection:'column', gap:4}}>
+              {EXISTING_ENVS.map(e => {
+                const active = cloneFrom === e.id;
+                return (
+                  <button key={e.id} onClick={() => setCloneFrom(e.id)} style={{
+                    display:'flex', alignItems:'center', gap:10, padding:'7px 9px',
+                    borderRadius:6, cursor:'pointer', textAlign:'left',
+                    background: active ? T.surface : 'transparent',
+                    border:`1px solid ${active ? T.line : 'transparent'}`,
+                  }}>
+                    <span style={{
+                      width:20, height:20, borderRadius:5, background:T.ink, color:T.bg,
+                      display:'flex', alignItems:'center', justifyContent:'center',
+                      fontSize:10.5, fontWeight:600,
+                    }}>{e.name[0]}</span>
+                    <div style={{flex:1, minWidth:0}}>
+                      <div style={{fontSize:12.5, fontWeight:500}}>{e.name}</div>
+                      <div style={{fontSize:11, color:T.inkMute}}>{e.hint}</div>
+                    </div>
+                    <span style={{fontSize:10.5, color:T.inkMute, fontFamily:T.mono}}>{e.count} tools</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div style={{
+          marginTop:16, padding:'10px 12px', borderRadius:8,
+          background:T.sunken, border:`1px solid ${T.lineSoft}`,
+          display:'flex', alignItems:'center', gap:10,
+        }}>
+          <Check checked={setActive} onChange={setSetActive}/>
+          <div style={{flex:1}}>
+            <div style={{fontSize:12.5, fontWeight:500}}>Switch to this environment after creating</div>
+            <div style={{fontSize:11.5, color:T.inkMute}}>Runs the bind commands immediately in connected shells</div>
+          </div>
+        </div>
+      </DialogBody>
+      <DialogFooter>
+        <span style={{fontSize:11.5, color:T.inkMute, fontFamily:T.mono, display:'flex', alignItems:'center', gap:6}}>
+          <Kbd>esc</Kbd> to cancel
+        </span>
+        <div style={{flex:1}}/>
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button onClick={onClose} disabled={!name}>Create environment</Button>
+      </DialogFooter>
+    </Dialog>
+  );
+}
+
+// ── Add Credential ──
+function AddCredentialDialog({ onClose, initialToolId = 'codex' }) {
+  const [toolId, setToolId] = React.useState(initialToolId);
+  const [alias, setAlias]   = React.useState('');
+  const [token, setToken]   = React.useState('');
+  const [filePath, setFilePath] = React.useState('~/.aws/credentials');
+  const [profile, setProfile]   = React.useState('default');
+  const [showSecret, setShowSecret] = React.useState(false);
+  const [bindTo, setBindTo] = React.useState(new Set());
+  const [endpointMode, setEndpointMode] = React.useState('official');
+  const [relayPresetId, setRelayPresetId] = React.useState(null);
+  const [customBase, setCustomBase] = React.useState('');
+  const [relayKey,   setRelayKey]   = React.useState('');
+
+  const tool = TOOLS_BY_ID[toolId];
+  const presets = RELAY_PRESETS[tool.id] || [];
+
+  React.useEffect(() => {
+    setEndpointMode('official');
+    setRelayPresetId(null);
+  }, [toolId]);
+
+  const toggleBind = (envId) => {
+    const next = new Set(bindTo);
+    next.has(envId) ? next.delete(envId) : next.add(envId);
+    setBindTo(next);
+  };
+
+  return (
+    <Dialog width={580}>
+      <DialogHeader
+        title="Add credential to pool"
+        subtitle="Credentials live in a shared pool. Environments point at them by alias — rotate the secret here and every env follows."
+        onClose={onClose}
+      />
+      <DialogBody>
+        <FieldLabel required>Tool</FieldLabel>
+        <div style={{
+          display:'grid', gridTemplateColumns:`repeat(${TOOLS.length}, 1fr)`, gap:6,
+          padding:4, borderRadius:8, background:T.sunken, border:`1px solid ${T.lineSoft}`,
+        }}>
+          {TOOLS.map(t => {
+            const active = t.id === toolId;
+            return (
+              <button key={t.id} onClick={() => setToolId(t.id)} style={{
+                padding:'8px 6px', borderRadius:6, cursor:'pointer',
+                background: active ? T.surface : 'transparent',
+                border:`1px solid ${active ? T.line : 'transparent'}`,
+                display:'flex', flexDirection:'column', alignItems:'center', gap:5,
+                fontFamily:'inherit',
+              }}>
+                <BrandTile tool={t} size={26} radius={6}/>
+                <span style={{fontSize:10.5, color: active ? T.ink : T.inkMute, fontWeight: active ? 500 : 400}}>
+                  {t.cli}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{marginTop:14}}>
+          <FieldLabel htmlFor="cred-alias" hint="How it appears in the pool" required>Alias</FieldLabel>
+          <Input id="cred-alias" mono value={alias}
+            placeholder="work-monorepo"
+            leading={<BrandTile tool={tool} size={18} radius={4}/>}
+            onChange={e => setAlias(e.target.value.replace(/\s+/g,'-').toLowerCase())}/>
+        </div>
+
+        <div style={{marginTop:14}}>
+          <FieldLabel
+            hint={tool.kind === 'oauth' ? 'Opens a browser tab to authenticate' :
+                  tool.kind === 'file'  ? 'Points at an on-disk credentials file' :
+                                          'Stored in the OS keychain — never written to disk'}
+            required>
+            {tool.kind === 'oauth' ? 'Authentication' : tool.kind === 'file' ? 'Credentials file' : 'Token'}
+          </FieldLabel>
+
+          {tool.kind === 'oauth' && (
+            <div style={{
+              display:'flex', alignItems:'center', gap:12,
+              padding:'12px 14px', borderRadius:8,
+              background:T.sunken, border:`1px dashed ${T.line}`,
+            }}>
+              <BrandTile tool={tool} size={32} radius={7}/>
+              <div style={{flex:1, minWidth:0}}>
+                <div style={{fontSize:12.5, fontWeight:500}}>Sign in to {tool.name}</div>
+                <div style={{fontSize:11.5, color:T.inkMute}}>
+                  We'll open <span style={{fontFamily:T.mono}}>{tool.cli} login</span> in your browser
+                </div>
+              </div>
+              <Button variant="outline" size="sm">Connect ↗</Button>
+            </div>
+          )}
+
+          {tool.kind === 'token' && (
+            <Input mono value={token} type={showSecret ? 'text' : 'password'}
+              placeholder={tool.id==='git' ? 'ghp_••••••••••••' : tool.id==='npm' ? 'npm_••••••••••••' : '••••••••••••'}
+              leading={<BrandTile tool={tool} size={18} radius={4}/>}
+              onChange={e => setToken(e.target.value)}
+              trailing={
+                <button onClick={() => setShowSecret(v=>!v)} style={{
+                  border:'none', background:'transparent', color:T.inkMute,
+                  cursor:'pointer', fontSize:11, fontFamily:T.mono, padding:'0 4px',
+                }}>{showSecret ? 'hide' : 'show'}</button>
+              }/>
+          )}
+
+          {tool.kind === 'file' && (
+            <div style={{display:'flex', flexDirection:'column', gap:8}}>
+              <Input mono value={filePath} onChange={e => setFilePath(e.target.value)}
+                leading={<BrandTile tool={tool} size={18} radius={4}/>}
+                trailing={<button style={{border:'none', background:'transparent', color:T.inkMute, cursor:'pointer', fontSize:11, padding:'0 4px'}}>browse…</button>}/>
+              <Input mono leading="profile" value={profile} onChange={e => setProfile(e.target.value)}/>
+            </div>
+          )}
+        </div>
+
+        {tool.relay && (
+          <div style={{marginTop:14}}>
+            <FieldLabel hint="Route requests through an official or relay host">Endpoint</FieldLabel>
+            <RadioCards value={endpointMode} onChange={setEndpointMode} options={[
+              { id:'official', label:'Official',      hint: presets[0]?.label || '' },
+              { id:'relay',    label:'Relay · 中转站', hint:'Use a community relay' },
+              { id:'custom',   label:'Custom',        hint:'Enter base URL' },
+            ]}/>
+
+            {endpointMode === 'relay' && (
+              <div style={{marginTop:10, padding:'10px 12px', borderRadius:8, background:T.sunken, border:`1px solid ${T.lineSoft}`}}>
+                <div style={{display:'flex', flexDirection:'column', gap:4}}>
+                  {presets.map(p => {
+                    const active = relayPresetId === p.id;
+                    return (
+                      <button key={p.id} onClick={() => setRelayPresetId(p.id)} style={{
+                        display:'flex', alignItems:'center', gap:10, padding:'8px 10px',
+                        borderRadius:6, cursor:'pointer', textAlign:'left',
+                        background: active ? T.surface : 'transparent',
+                        border:`1px solid ${active ? T.line : 'transparent'}`,
+                        fontFamily:'inherit',
+                      }}>
+                        <span style={{
+                          width:14, height:14, borderRadius:999, flexShrink:0,
+                          background: active ? T.accent : 'transparent',
+                          border:`1.5px solid ${active ? T.accent : T.line}`,
+                          boxShadow: active ? `inset 0 0 0 2.5px ${T.surface}` : 'none',
+                        }}/>
+                        <span style={{fontSize:12.5, fontFamily:T.mono, flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{p.label}</span>
+                        <span style={{
+                          fontSize:10, padding:'2px 7px', borderRadius:999,
+                          background: p.tag.includes('Official') ? T.okSoft : T.accentSoft,
+                          color: p.tag.includes('Official') ? T.ok : T.accentInk,
+                          fontWeight:500,
+                        }}>{p.tag}</span>
+                      </button>
+                    );
+                  })}
+                  <button style={{
+                    marginTop:2, padding:'7px 10px', borderRadius:6, textAlign:'left',
+                    border:`1px dashed ${T.line}`, background:'transparent',
+                    fontSize:11.5, color:T.inkMute, cursor:'pointer', fontFamily:'inherit',
+                  }}>+ add relay preset</button>
+                </div>
+                <div style={{marginTop:10, display:'grid', gridTemplateColumns:'1fr 1fr', gap:8}}>
+                  <div>
+                    <FieldLabel>Relay API key</FieldLabel>
+                    <Input mono type={showSecret ? 'text' : 'password'} placeholder="sk-relay-••••••••"
+                      value={relayKey} onChange={e => setRelayKey(e.target.value)}/>
+                  </div>
+                  <div>
+                    <FieldLabel>Relay base URL</FieldLabel>
+                    <Input mono value={presets.find(p=>p.id===relayPresetId)?.label || ''}
+                      disabled placeholder="— select a preset —"/>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {endpointMode === 'custom' && (
+              <div style={{marginTop:10, display:'grid', gridTemplateColumns:'1fr 1fr', gap:8}}>
+                <div>
+                  <FieldLabel>Base URL</FieldLabel>
+                  <Input mono leading="https://" placeholder="my-proxy.example.com/v1"
+                    value={customBase} onChange={e => setCustomBase(e.target.value)}/>
+                </div>
+                <div>
+                  <FieldLabel>API key</FieldLabel>
+                  <Input mono type={showSecret ? 'text' : 'password'} placeholder="sk-••••••••"
+                    value={relayKey} onChange={e => setRelayKey(e.target.value)}/>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <Separator style={{margin:'18px 0 14px'}}/>
+
+        <FieldLabel hint="Optional · pre-activates this credential in each chosen env">Bind immediately to…</FieldLabel>
+        <div style={{border:`1px solid ${T.line}`, borderRadius:8, overflow:'hidden', background:T.surface}}>
+          {EXISTING_ENVS.map((e, i) => {
+            const checked = bindTo.has(e.id);
+            return (
+              <div key={e.id} onClick={() => toggleBind(e.id)} style={{
+                display:'flex', alignItems:'center', gap:10, padding:'9px 12px',
+                borderTop: i === 0 ? 'none' : `1px solid ${T.lineSoft}`,
+                cursor:'pointer',
+                background: checked ? T.accentSoft : 'transparent',
+              }}>
+                <Check checked={checked} onChange={() => toggleBind(e.id)}/>
+                <span style={{
+                  width:20, height:20, borderRadius:5, background:T.ink, color:T.bg,
+                  display:'flex', alignItems:'center', justifyContent:'center',
+                  fontSize:10.5, fontWeight:600,
+                }}>{e.name[0]}</span>
+                <div style={{flex:1, minWidth:0}}>
+                  <div style={{fontSize:12.5, fontWeight:500}}>{e.name}</div>
+                  <div style={{fontSize:11, color:T.inkMute}}>{e.hint}</div>
+                </div>
+                <span style={{fontSize:10.5, color:T.inkMute, fontFamily:T.mono}}>
+                  {checked ? `${tool.cli} → ${alias || '…'}` : ''}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </DialogBody>
+      <DialogFooter>
+        <span style={{fontSize:11.5, color:T.inkMute, display:'inline-flex', alignItems:'center', gap:6}}>
+          <span style={{width:6, height:6, borderRadius:999, background:T.ok}}/>
+          Secret stored in OS keychain
+        </span>
+        <div style={{flex:1}}/>
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button onClick={onClose} disabled={!alias}>Add to pool</Button>
+      </DialogFooter>
+    </Dialog>
+  );
+}
+
+function DialogCanvas() {
+  const Backdrop = () => (
+    <div style={{position:'absolute', inset:0, background:T.bg, pointerEvents:'none', filter:'saturate(0.6)'}}>
+      <div style={{height:52, borderBottom:`1px solid ${T.line}`, background:T.surface}}/>
+      <div style={{padding:'18px 24px'}}>
+        <div style={{height:22, width:160, background:T.sunken, borderRadius:5}}/>
+        <div style={{height:12, width:220, background:T.sunken, borderRadius:4, marginTop:8, opacity:0.7}}/>
+      </div>
+      <div style={{margin:'0 20px', display:'grid', gridTemplateColumns:`repeat(7, 1fr)`, gap:12}}>
+        {TOOLS.map((_,i) => (
+          <div key={i} style={{height:240, background:T.surface, border:`1px solid ${T.line}`, borderRadius:10}}/>
+        ))}
+      </div>
+    </div>
+  );
+
+  const Caption = ({ children }) => (
+    <div style={{
+      fontSize:11, letterSpacing:'0.14em', textTransform:'uppercase',
+      color:'rgba(255,255,255,0.72)', marginBottom:10, fontWeight:500,
+    }}>{children}</div>
+  );
+
+  return (
+    <div style={{position:'relative', minHeight:'100vh', fontFamily:T.sans}}>
+      <Backdrop/>
+      <div style={{position:'fixed', inset:0, background:'rgba(24,20,14,0.42)', backdropFilter:'blur(2px)', WebkitBackdropFilter:'blur(2px)', zIndex:10}}/>
+      <div style={{
+        position:'relative', zIndex:20,
+        display:'flex', justifyContent:'center', alignItems:'flex-start',
+        gap:32, padding:'40px 24px 64px', flexWrap:'wrap',
+      }}>
+        <div>
+          <Caption>Dialog · New environment</Caption>
+          <AddEnvironmentDialog onClose={() => {}}/>
+        </div>
+        <div>
+          <Caption>Dialog · Add credential</Caption>
+          <AddCredentialDialog onClose={() => {}}/>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<DialogCanvas/>);
+</script>
+</body>
+</html>
