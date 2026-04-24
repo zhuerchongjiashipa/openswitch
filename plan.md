@@ -160,6 +160,17 @@ registered in `state.json`.
   - `PathsModal` prop renamed: `onError` → `onToast(msg, ok)` so the
     same channel can carry success + failure messages.
 
+- [x] **Windows CI packaging** (`<pending>`)
+  - `.github/workflows/build-windows.yml`: on push to master, tags
+    `v*`, PRs, or manual dispatch — `windows-latest` runner, Node 20,
+    stable Rust with `Swatinem/rust-cache`, `npm ci`, `npm run
+    tauri:build`. Uploads MSI + NSIS installers as a 14-day artifact;
+    on `v*` tags, also attaches them to a GitHub release.
+  - Real multi-size `src-tauri/icons/icon.ico` (16/32/48/64/128/256,
+    PNG-embedded) so Tauri can stamp the Windows exe resources; a
+    `source.png` placeholder ships alongside so icons can be
+    regenerated via `cargo tauri icon`.
+
 ### Not yet implemented
 
 - [ ] **Per-environment tool selection**
@@ -189,14 +200,16 @@ registered in `state.json`.
     a proper settings affordance (sidebar or Preferences window).
 
 - [ ] **Real icons**
-  - Replace `src-tauri/icons/*.png` placeholders (solid ink squares)
-    and the zero-byte `.icns` / `.ico`. Use `cargo tauri icon
-    path/to/source.png` once an asset exists.
+  - Windows `.ico` is now a valid 6-size ink-square (good enough for
+    testing). Replace with real artwork and regenerate the other
+    formats via `cargo tauri icon icons/source.png`. `icons/icon.icns`
+    is still a 0-byte placeholder — required before macOS bundles
+    work.
 
-- [ ] **Packaging**
-  - CI job (GitHub Actions) that runs `cargo test`, `npm run build`,
-    and produces signed bundles for macOS / Windows / Linux.
-  - Auto-update config (tauri-plugin-updater) if desired.
+- [ ] **macOS / Linux packaging**
+  - `build-windows.yml` proves the pipeline. Add sibling jobs for
+    `macos-latest` (.dmg/.app) and `ubuntu-latest` (.AppImage/.deb).
+    macOS needs a real `.icns` first.
 
 - [ ] **Tests**
   - Rust unit tests for `switcher::{activate, import_live,
